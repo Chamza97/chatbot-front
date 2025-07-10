@@ -11,9 +11,6 @@ const MyModelAdapter: ChatModelAdapter = {
   async run({ messages, abortSignal }) {
     const firstContent = messages[0].content[0];
     if (firstContent && firstContent.type === "text") {
-      console.log("🚀 ~ run ~ messages:", firstContent.text);
-
-      // TODO replace with your own API
       const result = await fetch("http://localhost:8001/generate", {
         method: "POST",
         headers: {
