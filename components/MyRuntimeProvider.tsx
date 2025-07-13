@@ -11,11 +11,12 @@ const MyModelAdapter: ChatModelAdapter = {
   async run({ messages, abortSignal }) {
     const firstContent = messages[0].content[0];
     if (firstContent && firstContent.type === "text") {
-      const result = await fetch("http://139.59.135.113:8001/generate", {
+      const result = await fetch("https://139.59.135.113:8001/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+
         // forward the messages in the chat to the API
         body: JSON.stringify({
           user_query: firstContent.text,
