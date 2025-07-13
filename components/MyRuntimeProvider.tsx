@@ -11,7 +11,7 @@ const MyModelAdapter: ChatModelAdapter = {
   async run({ messages, abortSignal }) {
     const firstContent = messages[0].content[0];
     if (firstContent && firstContent.type === "text") {
-      const result = await fetch("https://139.59.135.113:8001/generate", {
+      const result = await fetch("https://quatar-legal-chatbot.duckdns.org/generate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
