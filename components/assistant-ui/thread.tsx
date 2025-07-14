@@ -1,3 +1,6 @@
+// chamza97-chatbot-front/components/assistant-ui/thread.tsx
+"use client";
+
 import {
   ActionBarPrimitive,
   BranchPickerPrimitive,
@@ -15,6 +18,7 @@ import {
   PencilIcon,
   RefreshCwIcon,
   SendHorizontalIcon,
+  Loader2, // ADDED: Import Loader2 icon for loading indicator
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -43,9 +47,11 @@ export const Thread: FC = () => {
         />
 
         <ThreadPrimitive.If empty={false}>
+          {/* This div ensures there's always some space at the bottom when messages exist */}
           <div className="min-h-8 flex-grow" />
         </ThreadPrimitive.If>
 
+        {/* Sticky composer at the bottom */}
         <div className="sticky bottom-0 mt-3 flex w-full max-w-[var(--thread-max-width)] flex-col items-center justify-end rounded-t-lg bg-inherit pb-4">
           <ThreadScrollToBottom />
           <Composer />
@@ -74,7 +80,8 @@ const ThreadWelcome: FC = () => {
     <ThreadPrimitive.Empty>
       <div className="flex w-full max-w-[var(--thread-max-width)] flex-grow flex-col">
         <div className="flex w-full flex-grow flex-col items-center justify-center">
-          <p className="mt-4 font-medium">How can I help you today?</p>
+          {/* Updated welcome message to Arabic */}
+          <p className="mt-4 font-medium">كيف يمكنني مساعدتك اليوم؟</p>
         </div>
         <ThreadWelcomeSuggestions />
       </div>
@@ -97,12 +104,12 @@ const ThreadWelcomeSuggestions: FC = () => {
       </ThreadPrimitive.Suggestion>
       <ThreadPrimitive.Suggestion
         className="hover:bg-muted/80 flex max-w-sm grow basis-0 flex-col items-center justify-center rounded-lg border p-3 transition-colors ease-in"
-        prompt="What is  legal chatbot Qatar ?"
+        prompt="What is legal chatbot Qatar ?"
         method="replace"
         autoSend
       >
         <span className="line-clamp-2 text-ellipsis text-sm font-semibold">
-          What is  legal chatbot Qatar ?
+          What is legal chatbot Qatar ?
         </span>
       </ThreadPrimitive.Suggestion>
     </div>
@@ -126,6 +133,7 @@ const Composer: FC = () => {
 const ComposerAction: FC = () => {
   return (
     <>
+      {/* Show send button when not running */}
       <ThreadPrimitive.If running={false}>
         <ComposerPrimitive.Send asChild>
           <TooltipIconButton
@@ -137,14 +145,26 @@ const ComposerAction: FC = () => {
           </TooltipIconButton>
         </ComposerPrimitive.Send>
       </ThreadPrimitive.If>
+
+      {/* Show cancel button and loading indicator when running */}
       <ThreadPrimitive.If running>
+        {/*
+          You can choose one of these options:
+          1. A cancel button that ALSO shows a spinner (as coded below)
+          2. Just a spinner (if you remove the ComposerPrimitive.Cancel wrapper and its logic)
+        */}
         <ComposerPrimitive.Cancel asChild>
           <TooltipIconButton
             tooltip="Cancel"
             variant="default"
             className="my-2.5 size-8 p-2 transition-opacity ease-in"
+            // You might want to remove 'disabled' if the cancel button should be clickable
+            // disabled
           >
-            <CircleStopIcon />
+            {/* ADDED: Loading spinner with Tailwind's animate-spin class */}
+            <Loader2 className="animate-spin" />
+            {/* The original CircleStopIcon can be kept or removed based on preference */}
+            {/* <CircleStopIcon /> */}
           </TooltipIconButton>
         </ComposerPrimitive.Cancel>
       </ThreadPrimitive.If>
@@ -272,6 +292,7 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
   );
 };
 
+// CircleStopIcon is still used by ComposerAction if you uncomment the cancel button
 const CircleStopIcon = () => {
   return (
     <svg

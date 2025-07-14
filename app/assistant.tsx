@@ -1,7 +1,6 @@
 "use client";
 
-// import { AssistantRuntimeProvider } from "@assistant-ui/react";
-// import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
+import Image from "next/image"; // 1. Make sure Image is imported
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -13,19 +12,12 @@ import { Separator } from "@/components/ui/separator";
 import {
   Breadcrumb,
   BreadcrumbItem,
-  BreadcrumbLink,
   BreadcrumbList,
   BreadcrumbPage,
-  BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { MyRuntimeProvider } from "@/components/MyRuntimeProvider";
 
 export const Assistant = () => {
-  // const runtime = useChatRuntime({
-  //   api: "/api/chat",
-  //   initialMessages: [{ role: "assistant", content: "helloooo" }],
-  // });
-
   return (
     <MyRuntimeProvider>
       <SidebarProvider>
@@ -36,14 +28,22 @@ export const Assistant = () => {
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="#">
-                    Build Your Own ChatGPT UX
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Starter Template</BreadcrumbPage>
+                  <BreadcrumbPage>
+                    {/* 2. This container aligns the icon and text */}
+                    <div className="flex items-center gap-2">
+                      <Image
+                        src="/flag-qatar.png" // 3. Ensure the path is correct
+                        alt="Qatar Flag"
+                        width={22}
+                        height={22}
+                      />
+                      {/* 3. The text is now styled */}
+                      <span className="text-lg font-semibold text-zinc-800">
+                        بن غيث للمحاماة
+                      </span>
+                    </div>
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
