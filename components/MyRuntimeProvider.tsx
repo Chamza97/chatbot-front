@@ -88,7 +88,7 @@ const MyModelAdapter: ChatModelAdapter = {
 
       // The error message will now reflect network issues, CORS, or backend errors directly.
       // The specific 'AbortError' check for timeout is no longer needed here.
-      let errorMessage = `An error occurred while fetching a response: ${
+      const errorMessage = `An error occurred while fetching a response: ${
         error instanceof Error ? error.message : String(error)
       }.`;
 

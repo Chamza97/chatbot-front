@@ -1,6 +1,4 @@
 "use client";
-
-import Image from "next/image"; // 1. Make sure Image is imported
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
