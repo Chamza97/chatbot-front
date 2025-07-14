@@ -49,6 +49,7 @@ const MyModelAdapter: ChatModelAdapter = {
         headers: {
           "Content-Type": "application/json",
         },
+        // forward the messages in the chat to the API
         body: JSON.stringify({
           user_query: userQuery,
         }),

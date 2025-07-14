@@ -28,22 +28,14 @@ export const Assistant = () => {
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">
+                  <BreadcrumbLink href="#">
+                    Home
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>
-                    {/* 2. This container aligns the icon and text */}
-                    <div className="flex items-center gap-2">
-                      <Image
-                        src="/flag-qatar.png" // 3. Ensure the path is correct
-                        alt="Qatar Flag"
-                        width={22}
-                        height={22}
-                      />
-                      {/* 3. The text is now styled */}
-                      <span className="text-lg font-semibold text-zinc-800">
-                        بن غيث للمحاماة
-                      </span>
-                    </div>
-                  </BreadcrumbPage>
+                  <BreadcrumbPage>Legal Quatar legal chat</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>

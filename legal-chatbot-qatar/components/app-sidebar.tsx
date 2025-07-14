@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Github, MessagesSquare } from "lucide-react"
+
 import Link from "next/link"
 import {
   Sidebar,
@@ -21,7 +21,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
-                <Link href="https://binghaith.qa" target="_blank">
+                <Link href="/" target="_blank">
                   <div className="flex size-8 items-center justify-center rounded-lg ">
                       <Image
                           src="/logo.png"
