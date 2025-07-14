@@ -1,6 +1,7 @@
 import * as React from "react"
 import { MessagesSquare } from "lucide-react"
 import Link from "next/link"
+import Image from "next/image"
 import {
   Sidebar,
   SidebarContent,
