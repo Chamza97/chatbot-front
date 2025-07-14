@@ -1,5 +1,7 @@
 import * as React from "react"
+import { MessagesSquare } from "lucide-react"
 import Link from "next/link"
+import Image from "next/image"
 import {
   Sidebar,
   SidebarContent,
@@ -11,7 +13,6 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar"
 import { ThreadList } from "./assistant-ui/thread-list"
-import Image from "next/image";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   return (
@@ -35,19 +36,19 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <ThreadList />
       </SidebarContent>
-      
+
       <SidebarRail />
       <SidebarFooter>
         <SidebarMenu>
-         
+
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
 
             </SidebarMenuButton>
-            
+
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

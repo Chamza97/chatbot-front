@@ -1,7 +1,6 @@
 "use client";
 
-// import { AssistantRuntimeProvider } from "@assistant-ui/react";
-// import { useChatRuntime } from "@assistant-ui/react-ai-sdk";
+import Image from "next/image"; // 1. Make sure Image is imported
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -21,11 +20,6 @@ import {
 import { MyRuntimeProvider } from "@/components/MyRuntimeProvider";
 
 export const Assistant = () => {
-  // const runtime = useChatRuntime({
-  //   api: "/api/chat",
-  //   initialMessages: [{ role: "assistant", content: "helloooo" }],
-  // });
-
   return (
     <MyRuntimeProvider>
       <SidebarProvider>
