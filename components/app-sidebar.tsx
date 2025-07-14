@@ -26,7 +26,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                     <Image  width={80}  height={80} src="/logo.png" alt='Logo' />
                   </div>
                   <div className="flex flex-col gap-0.5 leading-none">
-                    <span className="font-semibold">Legal chatbot qatar</span>
+                    <span className="font-semibold">الدردشة القانونية لقطر</span>
                   </div>
                 </Link>
               </SidebarMenuButton>

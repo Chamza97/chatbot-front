@@ -1,6 +1,7 @@
+// chatbot-front/app/assistant.tsx
 "use client";
 
-import Image from "next/image"; // 1. Make sure Image is imported
+import Image from "next/image"; // تأكد من استيراد مكون الصورة
 import { Thread } from "@/components/assistant-ui/thread";
 import {
   SidebarInset,
@@ -37,7 +38,20 @@ export const Assistant = () => {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>Legal Qatar legal chat</BreadcrumbPage>
+                  {/*
+                    تم التعديل: إضافة أيقونة علم قطر بجانب النص في BreadcrumbPage
+                    تأكد من أن ملف flag-qatar.png موجود في مجلد public/
+                  */}
+                  <BreadcrumbPage className="flex items-center gap-2">
+                    <Image 
+                      src="/flag-qatar.png" 
+                      alt="علم قطر" 
+                      width={20} 
+                      height={13} // ارتفاع مناسب للعلم ليتناسب مع النص
+                      className="rounded-sm" // لجعل حواف العلم ناعمة قليلاً
+                    />
+                    بن غيث للمحاماة والأستشارات القانونية
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
