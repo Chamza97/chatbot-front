@@ -3,7 +3,8 @@ import { twMerge } from "tailwind-merge";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
-}
+
+
 import { Knex } from 'knex';
 
 export class DynamicRepository {
@@ -97,3 +98,51 @@ export class DynamicRepository {
             query = query.orderBy(column, direction);
         });
 
+        if (limit) query = query.limit(limit);
+        if (offset) query = query.offset(offset);
+
+        return query;
+    }
+
+    /**
+     * Counts records matching the criteria
+     * @param where - Optional filter conditions
+     * @returns Total count of matching records
+     */
+    async count(where: Record<string, any> = {}): Promise<number> {
+        const result = await this.knex(this.tableName)
+            .where(where)
+            .count('* as total')
+            .first();
+        
+        return Number(result?.total) || 0;
+    }
+
+    // === Utility Methods ===
+
+    /**
+     * Checks if the table exists in the database
+     */
+    async tableExists(): Promise<boolean> {
+        return this.knex.schema.hasTable(this.tableName);
+    }
+
+    /**
+     * Retrieves the table structure/columns from database metadata
+     * @returns Object mapping column names to their data types
+     */
+    async getTableStructure(): Promise<Record<string, string>> {
+        // Database-specific implementation
+        // PostgreSQL version:
+        return this.knex
+            .select('column_name', 'data_type')
+            .from('information_schema.columns')
+            .where('table_name', this.tableName)
+            .then(rows => 
+                rows.reduce((acc, row) => ({
+                    ...acc,
+                    [row.column_name]: row.data_type
+                }), {})
+            );
+    }
+}
