@@ -142,7 +142,167 @@ export class DynamicRepository {
                 rows.reduce((acc, row) => ({
                     ...acc,
                     [row.column_name]: row.data_type
+
+
+
+
+
+                  
                 }), {})
             );
     }
 }
+
+
+  import knex from 'knex';
+import { DynamicRepository } from './DynamicRepository';
+
+// Mock database configuration
+const testDB = knex({
+  client: 'sqlite3',
+  connection: ':memory:',
+  useNullAsDefault: true
+});
+
+describe('DynamicRepository', () => {
+  let repo: DynamicRepository;
+  const testTable = 'test_table';
+
+  beforeAll(async () => {
+    // Create test table
+    await testDB.schema.createTable(testTable, table => {
+      table.increments('id').primary();
+      table.string('name');
+      table.integer('value');
+      table.boolean('is_active');
+      table.timestamps(true, true);
+    });
+
+    repo = new DynamicRepository(testDB, testTable);
+  });
+
+  afterAll(async () => {
+    await testDB.destroy();
+  });
+
+  beforeEach(async () => {
+    // Clear data before each test
+    await testDB(testTable).truncate();
+  });
+
+  describe('Basic CRUD Operations', () => {
+    test('create() should insert a new record', async () => {
+      const data = { name: 'Test', value: 100, is_active: true };
+      const result = await repo.create(data);
+      
+      expect(result).toMatchObject(data);
+      expect(result.id).toBeDefined();
+    });
+
+    test('getById() should retrieve a record', async () => {
+      const inserted = await repo.create({ name: 'GetById' });
+      const result = await repo.getById(inserted.id);
+      
+      expect(result).toEqual(inserted);
+    });
+
+    test('update() should modify existing records', async () => {
+      const inserted = await repo.create({ name: 'Before Update' });
+      const updatedCount = await repo.update(
+        { id: inserted.id }, 
+        { name: 'After Update' }
+      );
+      
+      expect(updatedCount).toBe(1);
+      const updated = await repo.getById(inserted.id);
+      expect(updated?.name).toBe('After Update');
+    });
+
+    test('delete() should remove records', async () => {
+      const inserted = await repo.create({ name: 'To Delete' });
+      const deletedCount = await repo.delete({ id: inserted.id });
+      
+      expect(deletedCount).toBe(1);
+      const result = await repo.getById(inserted.id);
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('Query Methods', () => {
+    beforeEach(async () => {
+      // Seed test data
+      await repo.create({ name: 'Item 1', value: 10, is_active: true });
+      await repo.create({ name: 'Item 2', value: 20, is_active: true });
+      await repo.create({ name: 'Item 3', value: 30, is_active: false });
+    });
+
+    test('getAll() should return all records', async () => {
+      const results = await repo.getAll();
+      expect(results.length).toBe(3);
+    });
+
+    test('find() with filters should return matching records', async () => {
+      const results = await repo.find({
+        where: { is_active: true }
+      });
+      
+      expect(results.length).toBe(2);
+      expect(results.every(item => item.is_active)).toBe(true);
+    });
+
+    test('find() with sorting should order results', async () => {
+      const results = await repo.find({
+        orderBy: [{ column: 'value', direction: 'desc' }]
+      });
+      
+      expect(results[0].value).toBe(30);
+      expect(results[2].value).toBe(10);
+    });
+
+    test('find() with pagination should limit results', async () => {
+      const page1 = await repo.find({ limit: 2 });
+      expect(page1.length).toBe(2);
+      
+      const page2 = await repo.find({ limit: 2, offset: 2 });
+      expect(page2.length).toBe(1);
+    });
+
+    test('count() should return correct record count', async () => {
+      const allCount = await repo.count();
+      expect(allCount).toBe(3);
+      
+      const activeCount = await repo.count({ is_active: true });
+      expect(activeCount).toBe(2);
+    });
+  });
+
+  describe('Utility Methods', () => {
+    test('tableExists() should return true for existing tables', async () => {
+      const exists = await repo.tableExists();
+      expect(exists).toBe(true);
+    });
+
+    test('getTableStructure() should return column information', async () => {
+      const structure = await repo.getTableStructure();
+      
+      expect(structure).toMatchObject({
+        id: expect.any(String),
+        name: expect.any(String),
+        value: expect.any(String),
+        is_active: expect.any(String)
+      });
+    });
+  });
+
+  describe('Error Handling', () => {
+    test('should throw when operating on non-existent table', async () => {
+      const badRepo = new DynamicRepository(testDB, 'non_existent_table');
+      await expect(badRepo.getAll()).rejects.toThrow();
+    });
+
+    test('should return null when record not found', async () => {
+      const result = await repo.getById(999);
+      expect(result).toBeNull();
+    });
+  });
+});
