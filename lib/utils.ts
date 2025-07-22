@@ -5,9 +5,11 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 
 import { Request, Response, NextFunction, Router, RequestHandler } from 'express';
-import { ClassConstructor, plainToClass, validate } from 'class-validator';
+import { ClassConstructor, plainToClass } from 'class-transformer';
+import { validate } from 'class-validator';
 import 'reflect-metadata';
 
+// Ajout des types pour les données validées
 declare global {
   namespace Express {
     interface Request {
@@ -18,20 +20,21 @@ declare global {
   }
 }
 
-// Types utilitaires améliorés
 type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch';
+
 interface RouteDefinition {
   method: HttpMethod;
   path: string;
   handlerName: string;
   middlewares: RequestHandler[];
 }
+
 interface PathParamMetadata {
   index: number;
   name?: string;
 }
 
-// Implémentation des décorateurs
+// Contrôleur principal
 export function Controller(prefix: string = ''): ClassDecorator {
   return <TFunction extends Function>(TargetClass: TFunction) => {
     return class extends (TargetClass as any) {
@@ -43,16 +46,17 @@ export function Controller(prefix: string = ''): ClassDecorator {
       }
 
       private registerRoutes(): void {
-        const routes: RouteDefinition[] = Reflect.getMetadata('routes', this) || [];
+        const routes: RouteDefinition[] = Reflect.getMetadata('routes', this.constructor) || [];
 
         routes.forEach(({ method, path, handlerName, middlewares }) => {
           const handler = this[handlerName].bind(this);
+          const handlerWithParams = injectParams(handler, this, handlerName);
           this._router[method](
             `${prefix}${path}`,
             ...middlewares,
             async (req: Request, res: Response, next: NextFunction) => {
               try {
-                await handler(req, res, next);
+                await handlerWithParams(req, res, next);
               } catch (error) {
                 next(error);
               }
@@ -68,10 +72,36 @@ export function Controller(prefix: string = ''): ClassDecorator {
   };
 }
 
-// Factory pour les décorateurs HTTP
+// Injection des paramètres décorés
+const injectParams = (
+  handler: Function,
+  target: any,
+  propertyKey: string
+) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const bodyParams: PathParamMetadata[] = Reflect.getMetadata('bodyParams', target, propertyKey) || [];
+    const queryParams: PathParamMetadata[] = Reflect.getMetadata('queryParams', target, propertyKey) || [];
+    const pathParams: PathParamMetadata[] = Reflect.getMetadata('pathParams', target, propertyKey) || [];
+
+    const args: any[] = [];
+
+    for (const { index, name } of [...bodyParams, ...queryParams, ...pathParams]) {
+      const source =
+        bodyParams.find(p => p.index === index) ? 'body' :
+        queryParams.find(p => p.index === index) ? 'query' : 'params';
+
+      const value = name ? req[source][name] : req[source];
+      args[index] = value;
+    }
+
+    return handler(...args, req, res, next);
+  };
+};
+
+// Création décorateurs HTTP
 const createHttpDecorator = (method: HttpMethod) => {
   return (path: string = ''): MethodDecorator => {
-    return (target: object, propertyKey: string | symbol) => {
+    return (target, propertyKey) => {
       const routes: RouteDefinition[] = Reflect.getMetadata('routes', target.constructor) || [];
       routes.push({
         method,
@@ -90,25 +120,25 @@ export const Put = createHttpDecorator('put');
 export const Delete = createHttpDecorator('delete');
 export const Patch = createHttpDecorator('patch');
 
-// Décorateur middleware amélioré
+// Middleware
 export function Use(...middlewares: RequestHandler[]): MethodDecorator {
-  return (target: object, propertyKey: string | symbol) => {
+  return (target, propertyKey) => {
     Reflect.defineMetadata('middlewares', middlewares, target, propertyKey);
   };
 }
 
-// Factory pour les décorateurs de validation
+// Validation
 const createValidateDecorator = <T extends 'body' | 'query' | 'params'>(
   target: T,
   skipMissing = false
 ) => {
   return (dtoClass: ClassConstructor<unknown>): MethodDecorator => {
-    return (targetObj: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
+    return (targetObj, propertyKey, descriptor: PropertyDescriptor) => {
       const originalMethod = descriptor.value;
 
       descriptor.value = async function (req: Request, res: Response, next: NextFunction) {
         try {
-          const dtoInstance = plainToClass(dtoClass, req[target]);
+          const dtoInstance = plainToClass(dtoClass, req[target] as object);
           const errors = await validate(dtoInstance, { skipMissingProperties: skipMissing });
 
           if (errors.length > 0) {
@@ -122,7 +152,7 @@ const createValidateDecorator = <T extends 'body' | 'query' | 'params'>(
             });
           }
 
-          req[`validated${target.charAt(0).toUpperCase() + target.slice(1)}` as const] = dtoInstance;
+          (req as any)[`validated${target.charAt(0).toUpperCase() + target.slice(1)}`] = dtoInstance;
           return originalMethod.call(this, req, res, next);
         } catch (error) {
           next(error);
@@ -136,10 +166,10 @@ export const ValidateBody = createValidateDecorator('body');
 export const ValidateQuery = createValidateDecorator('query', true);
 export const ValidateParams = createValidateDecorator('params');
 
-// Factory pour les décorateurs d'injection
+// Décorateurs de paramètres
 const createParamDecorator = (type: 'body' | 'query' | 'path') => {
   return (name?: string): ParameterDecorator => {
-    return (target: object, propertyKey: string | symbol | undefined, parameterIndex: number) => {
+    return (target, propertyKey, parameterIndex) => {
       if (!propertyKey) {
         throw new Error(`@${type.charAt(0).toUpperCase() + type.slice(1)} must be used on a method parameter`);
       }
@@ -155,3 +185,4 @@ const createParamDecorator = (type: 'body' | 'query' | 'path') => {
 export const Body = createParamDecorator('body');
 export const Query = createParamDecorator('query');
 export const Param = createParamDecorator('path');
+
