@@ -4,48 +4,59 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 
-import { Request, Response, NextFunction, Router } from 'express';
+import { Request, Response, NextFunction, Router, RequestHandler } from 'express';
 import { ClassConstructor, plainToClass, validate } from 'class-validator';
-import { transformAndValidate } from 'class-transformer-validator';
+import 'reflect-metadata';
 
 declare global {
   namespace Express {
     interface Request {
-      validatedBody?: any;
-      validatedQuery?: any;
-      validatedParams?: any;
+      validatedBody?: unknown;
+      validatedQuery?: unknown;
+      validatedParams?: unknown;
     }
   }
 }
 
-// Décorateur de classe pour le préfixe de route
+// Types utilitaires
+type HttpMethod = 'get' | 'post' | 'put' | 'delete' | 'patch';
+type RouteDefinition = {
+  method: HttpMethod;
+  path: string;
+  handlerName: string;
+  middlewares: RequestHandler[];
+};
+type PathParamMetadata = { index: number; name?: string };
+
+// Décorateur de contrôleur
 export function Controller(prefix: string = '') {
-  return function <T extends { new (...args: any[]): {} }>(constructor: T) {
-    return class extends constructor {
-      router = Router();
-      constructor(...args: any[]) {
+  return function <T extends new (...args: unknown[]) => unknown>(TargetClass: T) {
+    return class extends (TargetClass as new (...args: unknown[]) => any) {
+      private _router = Router();
+
+      constructor(...args: unknown[]) {
         super(...args);
-        this.registerRoutes();
+        this._registerRoutes();
       }
 
-      private registerRoutes() {
-        const routes: Array<{
-          method: 'get' | 'post' | 'put' | 'delete' | 'patch';
-          path: string;
-          handlerName: string;
-          middlewares: RequestHandler[];
-        }> = Reflect.getMetadata('routes', this) || [];
+      private _registerRoutes() {
+        const routes: RouteDefinition[] = Reflect.getMetadata('routes', this) || [];
 
         routes.forEach(route => {
-          this.router[route.method](
-            route.path,
+          const fullPath = prefix + route.path;
+          this._router[route.method](
+            fullPath,
             ...route.middlewares,
             (req: Request, res: Response, next: NextFunction) => {
-              const handler = this[route.handlerName].bind(this);
+              const handler = this[route.handlerName].bind(this) as RequestHandler;
               return handler(req, res, next);
             }
           );
         });
+      }
+
+      get router(): Router {
+        return this._router;
       }
     };
   };
@@ -53,19 +64,19 @@ export function Controller(prefix: string = '') {
 
 // Décorateurs HTTP
 export function Get(path: string = '') {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return (target: object, propertyKey: string) => {
     addRoute('get', path, target, propertyKey);
   };
 }
 
 export function Post(path: string = '') {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return (target: object, propertyKey: string) => {
     addRoute('post', path, target, propertyKey);
   };
 }
 
-function addRoute(method: string, path: string, target: any, propertyKey: string) {
-  const routes = Reflect.getMetadata('routes', target) || [];
+function addRoute(method: HttpMethod, path: string, target: object, propertyKey: string) {
+  const routes: RouteDefinition[] = Reflect.getMetadata('routes', target) || [];
   routes.push({
     method,
     path,
@@ -77,15 +88,15 @@ function addRoute(method: string, path: string, target: any, propertyKey: string
 
 // Décorateur middleware
 export function Use(...middlewares: RequestHandler[]) {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return (target: object, propertyKey: string) => {
     Reflect.defineMetadata('middlewares', middlewares, target, propertyKey);
   };
 }
 
-// Décorateur de validation pour le body
-export function ValidateBody(dtoClass: ClassConstructor<any>): MethodDecorator {
-  return function (target: any, propertyKey: string | symbol, descriptor: PropertyDescriptor) {
-    const originalMethod = descriptor.value;
+// Décorateurs de validation
+export function ValidateBody(dtoClass: ClassConstructor<unknown>): MethodDecorator {
+  return (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value as RequestHandler;
     
     descriptor.value = async function (req: Request, res: Response, next: NextFunction) {
       try {
@@ -104,18 +115,17 @@ export function ValidateBody(dtoClass: ClassConstructor<any>): MethodDecorator {
         }
         
         req.validatedBody = dtoInstance;
-        return originalMethod.apply(this, [req, res, next]);
-      } catch (err) {
-        next(err);
+        return originalMethod.call(this, req, res, next);
+      } catch (error) {
+        next(error);
       }
     };
   };
 }
 
-// Décorateur de validation pour les query params
-export function ValidateQuery(dtoClass: ClassConstructor<any>): MethodDecorator {
-  return function (target: any, propertyKey: string | symbol, descriptor: PropertyDescriptor) {
-    const originalMethod = descriptor.value;
+export function ValidateQuery(dtoClass: ClassConstructor<unknown>): MethodDecorator {
+  return (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value as RequestHandler;
     
     descriptor.value = async function (req: Request, res: Response, next: NextFunction) {
       try {
@@ -134,18 +144,17 @@ export function ValidateQuery(dtoClass: ClassConstructor<any>): MethodDecorator 
         }
         
         req.validatedQuery = dtoInstance;
-        return originalMethod.apply(this, [req, res, next]);
-      } catch (err) {
-        next(err);
+        return originalMethod.call(this, req, res, next);
+      } catch (error) {
+        next(error);
       }
     };
   };
 }
 
-// Décorateur de validation pour les path params
-export function ValidateParams(dtoClass: ClassConstructor<any>): MethodDecorator {
-  return function (target: any, propertyKey: string | symbol, descriptor: PropertyDescriptor) {
-    const originalMethod = descriptor.value;
+export function ValidateParams(dtoClass: ClassConstructor<unknown>): MethodDecorator {
+  return (target: object, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value as RequestHandler;
     
     descriptor.value = async function (req: Request, res: Response, next: NextFunction) {
       try {
@@ -164,30 +173,33 @@ export function ValidateParams(dtoClass: ClassConstructor<any>): MethodDecorator
         }
         
         req.validatedParams = dtoInstance;
-        return originalMethod.apply(this, [req, res, next]);
-      } catch (err) {
-        next(err);
+        return originalMethod.call(this, req, res, next);
+      } catch (error) {
+        next(error);
       }
     };
   };
 }
 
-// Décorateurs d'injection de paramètres
+// Décorateurs d'injection
 export function Body(): ParameterDecorator {
-  return function (target: any, propertyKey: string | symbol, parameterIndex: number) {
+  return (target: object, propertyKey: string | symbol | undefined, parameterIndex: number) => {
+    if (!propertyKey) throw new Error('@Body must be used on a method parameter');
     Reflect.defineMetadata('bodyParam', parameterIndex, target, propertyKey);
   };
 }
 
 export function Query(): ParameterDecorator {
-  return function (target: any, propertyKey: string | symbol, parameterIndex: number) {
+  return (target: object, propertyKey: string | symbol | undefined, parameterIndex: number) => {
+    if (!propertyKey) throw new Error('@Query must be used on a method parameter');
     Reflect.defineMetadata('queryParam', parameterIndex, target, propertyKey);
   };
 }
 
 export function Param(paramName?: string): ParameterDecorator {
-  return function (target: any, propertyKey: string | symbol, parameterIndex: number) {
-    const params = Reflect.getMetadata('pathParams', target, propertyKey) || [];
+  return (target: object, propertyKey: string | symbol | undefined, parameterIndex: number) => {
+    if (!propertyKey) throw new Error('@Param must be used on a method parameter');
+    const params: PathParamMetadata[] = Reflect.getMetadata('pathParams', target, propertyKey) || [];
     params.push({ index: parameterIndex, name: paramName });
     Reflect.defineMetadata('pathParams', params, target, propertyKey);
   };
