@@ -186,3 +186,58 @@ export const Body = createParamDecorator('body');
 export const Query = createParamDecorator('query');
 export const Param = createParamDecorator('path');
 
+
+export abstract class BaseController {
+  protected readonly _router: Router = Router();
+  abstract get router(): Router;
+}
+decorators.ts (mise à jour du décorateur @Controller)
+ts
+Copier
+Modifier
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express';
+import 'reflect-metadata';
+import { BaseController } from './BaseController';
+
+// ... les autres types ici ...
+
+export function Controller(prefix: string = ''): ClassDecorator {
+  return function (TargetClass: any) {
+    return class extends TargetClass implements BaseController {
+      protected readonly _router: Router = Router();
+
+      constructor(...args: any[]) {
+        super(...args);
+        this.registerRoutes();
+      }
+
+      private registerRoutes(): void {
+        const routes: RouteDefinition[] = Reflect.getMetadata('routes', TargetClass) || [];
+
+        routes.forEach(({ method, path, handlerName, middlewares }) => {
+          const handler = this[handlerName].bind(this);
+          const handlerWithParams = injectParams(handler, this, handlerName);
+          this._router[method](
+            `${prefix}${path}`,
+            ...middlewares,
+            async (req: Request, res: Response, next: NextFunction) => {
+              try {
+                await handlerWithParams(req, res, next);
+              } catch (err) {
+                next(err);
+              }
+            }
+          );
+        });
+      }
+
+      public get router(): Router {
+        return this._router;
+      }
+    };
+  };
+}
+⚠️ Assure-toi que BaseController.ts est bien importé dans decorators.ts.
+
+
+
