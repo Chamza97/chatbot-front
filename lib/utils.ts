@@ -6,6 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 
 
 import { Knex } from 'knex';
+import { decryptObject } from './encryption-utils'; // Assuming this is your custom decryption method
 import crypto from 'crypto';
 
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-32-byte-long-encryption-key-aa';
@@ -14,8 +15,8 @@ const ALGORITHM = 'aes-256-cbc';
 
 /**
  * A dynamic repository class that provides encrypted CRUD operations for database tables
- * using AES-256-CBC encryption. All string data is automatically encrypted before storage
- * and decrypted when retrieved.
+ * using AES-256-CBC encryption. All data is automatically encrypted before storage
+ * and decrypted when retrieved using the provided decryptObject method.
  */
 export class DynamicRepository {
     /**
@@ -47,24 +48,6 @@ export class DynamicRepository {
     }
 
     /**
-     * Decrypts a string encrypted with the encrypt method
-     * @private
-     * @param {string} text - Encrypted string in format 'iv:encryptedData'
-     * @returns {string} Decrypted string
-     */
-    private decrypt(text: string): string {
-        const [ivPart, encryptedPart] = text.split(':');
-        if (!ivPart || !encryptedPart) return text;
-        
-        const iv = Buffer.from(ivPart, 'hex');
-        const encryptedText = Buffer.from(encryptedPart, 'hex');
-        const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
-        let decrypted = decipher.update(encryptedText);
-        decrypted = Buffer.concat([decrypted, decipher.final()]);
-        return decrypted.toString();
-    }
-
-    /**
      * Recursively encrypts all string values in an object/array
      * @private
      * @param {any} data - Data to encrypt
@@ -84,46 +67,20 @@ export class DynamicRepository {
         return data;
     }
 
-    /**
-     * Recursively decrypts all encrypted values in an object/array
-     * @private
-     * @param {any} data - Data to decrypt
-     * @returns {any} Data with all encrypted strings decrypted
-     */
-    private decryptData(data: any): any {
-        if (data === null || data === undefined) return data;
-        if (typeof data === 'string' && data.includes(':')) {
-            try {
-                return this.decrypt(data);
-            } catch {
-                return data;
-            }
-        }
-        if (typeof data === 'number') return data;
-        if (typeof data === 'boolean') return data;
-        if (Array.isArray(data)) return data.map(item => this.decryptData(item));
-        if (typeof data === 'object') {
-            return Object.fromEntries(
-                Object.entries(data).map(([key, value]) => [key, this.decryptData(value)])
-            );
-        }
-        return data;
-    }
-
     // === CRUD Operations ===
 
     /**
-     * Retrieves all records from the table with automatic decryption
+     * Retrieves all records from the table with automatic decryption using decryptObject
      * @param {string[]} [columns=['*']] - Columns to select
      * @returns {Promise<Record<string, any>[]>} Array of decrypted records
      */
     async getAll(columns: string[] = ['*']): Promise<Record<string, any>[]> {
         const results = await this.knex(this.tableName).select(columns);
-        return results.map(item => this.decryptData(item));
+        return decryptObject(results); // Using your decryptObject method
     }
 
     /**
-     * Finds a single record by ID with automatic decryption
+     * Finds a single record by ID with automatic decryption using decryptObject
      * @param {number|string} id - The ID value to search for
      * @param {string[]} [columns=['*']] - Columns to select
      * @returns {Promise<Record<string, any>|null} Decrypted record or null if not found
@@ -133,20 +90,20 @@ export class DynamicRepository {
             .select(columns)
             .where(this.idColumn, id)
             .first();
-        return result ? this.decryptData(result) : null;
+        return result ? decryptObject(result) : null; // Using your decryptObject method
     }
 
     /**
      * Creates a new record with automatic encryption of all string values
      * @param {Record<string, any>} data - Data to insert
-     * @returns {Promise<Record<string, any>>} The created record (decrypted)
+     * @returns {Promise<Record<string, any>>} The created record (decrypted using decryptObject)
      */
     async create(data: Record<string, any>): Promise<Record<string, any>> {
         const encryptedData = this.encryptData(data);
         const [record] = await this.knex(this.tableName)
             .insert(encryptedData)
             .returning('*');
-        return this.decryptData(record);
+        return decryptObject(record); // Using your decryptObject method
     }
 
     /**
@@ -192,7 +149,7 @@ export class DynamicRepository {
      * @param {number} [options.limit] - Maximum records to return
      * @param {number} [options.offset] - Records to skip
      * @param {string[]} [options.columns=['*']] - Columns to select
-     * @returns {Promise<Record<string, any>[]>} Array of decrypted records
+     * @returns {Promise<Record<string, any>[]>} Array of decrypted records (using decryptObject)
      */
     async find({
         where = {},
@@ -217,7 +174,7 @@ export class DynamicRepository {
         if (offset) query = query.offset(offset);
 
         const results = await query;
-        const decryptedResults = results.map(item => this.decryptData(item));
+        const decryptedResults = decryptObject(results); // Using your decryptObject method
         
         return decryptedResults.filter(item => {
             for (const [key, value] of Object.entries(where)) {
