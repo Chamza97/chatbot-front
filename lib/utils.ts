@@ -21,54 +21,41 @@ function injectParams(
   context: unknown,
   handlerName: string
 ): (...args: [Request, Response, NextFunction]) => Promise<void> {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (req, res, next) => {
     return handler(req, res, next);
   };
 }
 
-// Interface pour exposer le router
-export interface IController {
-  router: Router;
-}
+// Fonction utilitaire pour instancier un contrôleur avec son Router
+export function createController(ControllerClass: new () => any): Router {
+  const instance = new ControllerClass();
+  const router = Router();
 
-// Décorateur @Controller
-export function Controller(prefix = '') {
-  return function <T extends { new (...args: any[]): {} }>(OriginalClass: T): T {
-    return class extends OriginalClass implements IController {
-      private readonly _router: Router;
+  const prefix: string = Reflect.getMetadata('prefix', ControllerClass) || '';
+  const routes: RouteDefinition[] = Reflect.getMetadata('routes', ControllerClass) || [];
 
-      constructor(...args: any[]) {
-        super(...args);
-        this._router = Router();
-        this.registerRoutes();
-      }
+  for (const { method, path, handlerName, middlewares } of routes) {
+    const handler = instance[handlerName].bind(instance);
+    const handlerWithParams = injectParams(handler, instance, handlerName);
 
-      private registerRoutes(): void {
-        const routes: RouteDefinition[] = Reflect.getMetadata('routes', OriginalClass) || [];
-
-        for (const { method, path, handlerName, middlewares } of routes) {
-          const handler = (this as any)[handlerName].bind(this);
-          const handlerWithParams = injectParams(handler, this, handlerName);
-
-          this._router[method](
-            `${prefix}${path}`,
-            ...middlewares,
-            async (req: Request, res: Response, next: NextFunction) => {
-              try {
-                await handlerWithParams(req, res, next);
-              } catch (err) {
-                next(err);
-              }
-            }
-          );
+    router[method](
+      `${prefix}${path}`,
+      ...middlewares,
+      async (req, res, next) => {
+        try {
+          await handlerWithParams(req, res, next);
+        } catch (err) {
+          next(err);
         }
       }
+    );
+  }
 
-      public get router(): Router {
-        return this._router;
-      }
-    };
+  return router;
+}
+export function Controller(prefix: string = ''): ClassDecorator {
+  return (target) => {
+    Reflect.defineMetadata('prefix', prefix, target);
   };
 }
-
 
