@@ -6,160 +6,163 @@ export function cn(...inputs: ClassValue[]) {
 
 
 import { Knex } from 'knex';
+import crypto from 'crypto';
 
-/**
- * A dynamic repository class for performing CRUD operations on database tables
- * without requiring predefined TypeScript models or schemas.
- */
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-32-byte-long-encryption-key-aa';
+const IV_LENGTH = 16;
+const ALGORITHM = 'aes-256-cbc';
+
 export class DynamicRepository {
-  /**
-   * Creates a new DynamicRepository instance
-   * @param {Knex} knex - Initialized Knex instance
-   * @param {string} tableName - Name of the database table to manage
-   * @param {string} [idColumn='id'] - Name of the primary key column
-   */
-  constructor(
-    protected readonly knex: Knex,
-    protected readonly tableName: string,
-    protected readonly idColumn: string = 'id'
-  ) {}
+    constructor(
+        protected readonly knex: Knex,
+        protected readonly tableName: string,
+        protected readonly idColumn: string = 'id'
+    ) {}
 
-  // === Basic CRUD Operations ===
+    // === Encryption Helpers ===
+    private encrypt(text: string): string {
+        const iv = crypto.randomBytes(IV_LENGTH);
+        const cipher = crypto.createCipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+        let encrypted = cipher.update(text);
+        encrypted = Buffer.concat([encrypted, cipher.final()]);
+        return `${iv.toString('hex')}:${encrypted.toString('hex')}`;
+    }
 
-  /**
-   * Retrieves all records from the table
-   * @param {string[]} [columns=['*']] - Array of columns to select
-   * @returns {Promise<Record<string, any>[]>} Array of all records
-   */
-  async getAll(columns: string[] = ['*']): Promise<Record<string, any>[]> {
-    return this.knex(this.tableName).select(columns);
-  }
+    private decrypt(text: string): string {
+        const [ivPart, encryptedPart] = text.split(':');
+        if (!ivPart || !encryptedPart) return text;
+        
+        const iv = Buffer.from(ivPart, 'hex');
+        const encryptedText = Buffer.from(encryptedPart, 'hex');
+        const decipher = crypto.createDecipheriv(ALGORITHM, Buffer.from(ENCRYPTION_KEY), iv);
+        let decrypted = decipher.update(encryptedText);
+        decrypted = Buffer.concat([decrypted, decipher.final()]);
+        return decrypted.toString();
+    }
 
-  /**
-   * Finds a single record by its primary key
-   * @param {string|number} id - The ID value to search for
-   * @param {string[]} [columns=['*']] - Array of columns to select
-   * @returns {Promise<Record<string, any>|null} The found record or null
-   */
-  async getById(id: number | string, columns: string[] = ['*']): Promise<Record<string, any> | null> {
-    return this.knex(this.tableName)
-      .select(columns)
-      .where(this.idColumn, id)
-      .first();
-  }
+    private encryptData(data: any): any {
+        if (data === null || data === undefined) return data;
+        if (typeof data === 'string') return this.encrypt(data);
+        if (typeof data === 'number') return data.toString();
+        if (typeof data === 'boolean') return data;
+        if (Array.isArray(data)) return data.map(item => this.encryptData(item));
+        if (typeof data === 'object') {
+            return Object.fromEntries(
+                Object.entries(data).map(([key, value]) => [key, this.encryptData(value)])
+            );
+        }
+        return data;
+    }
 
-  /**
-   * Inserts a new record into the table
-   * @param {Record<string, any>} data - Key-value pairs to insert
-   * @returns {Promise<Record<string, any>>} The created record
-   */
-  async create(data: Record<string, any>): Promise<Record<string, any>> {
-    const [record] = await this.knex(this.tableName)
-      .insert(data)
-      .returning('*');
-    return record;
-  }
+    private decryptData(data: any): any {
+        if (data === null || data === undefined) return data;
+        if (typeof data === 'string' && data.includes(':')) {
+            try {
+                return this.decrypt(data);
+            } catch {
+                return data;
+            }
+        }
+        if (typeof data === 'number') return data;
+        if (typeof data === 'boolean') return data;
+        if (Array.isArray(data)) return data.map(item => this.decryptData(item));
+        if (typeof data === 'object') {
+            return Object.fromEntries(
+                Object.entries(data).map(([key, value]) => [key, this.decryptData(value)])
+            );
+        }
+        return data;
+    }
 
-  /**
-   * Updates records matching the criteria
-   * @param {Record<string, any>} criteria - Key-value pairs for WHERE clause
-   * @param {Record<string, any>} updates - Key-value pairs to update
-   * @returns {Promise<number>} Number of affected rows
-   */
-  async update(criteria: Record<string, any>, updates: Record<string, any>): Promise<number> {
-    return this.knex(this.tableName)
-      .where(criteria)
-      .update(updates);
-  }
+    // === CRUD Operations ===
+    async getAll(columns: string[] = ['*']): Promise<Record<string, any>[]> {
+        const results = await this.knex(this.tableName).select(columns);
+        return results.map(item => this.decryptData(item));
+    }
 
-  /**
-   * Deletes records matching the criteria
-   * @param {Record<string, any>} criteria - Key-value pairs for WHERE clause
-   * @returns {Promise<number>} Number of deleted rows
-   */
-  async delete(criteria: Record<string, any>): Promise<number> {
-    return this.knex(this.tableName)
-      .where(criteria)
-      .del();
-  }
+    async getById(id: number | string, columns: string[] = ['*']): Promise<Record<string, any> | null> {
+        const result = await this.knex(this.tableName)
+            .select(columns)
+            .where(this.idColumn, id)
+            .first();
+        return result ? this.decryptData(result) : null;
+    }
 
-  // === Advanced Query Methods ===
+    async create(data: Record<string, any>): Promise<Record<string, any>> {
+        const encryptedData = this.encryptData(data);
+        const [record] = await this.knex(this.tableName)
+            .insert(encryptedData)
+            .returning('*');
+        return this.decryptData(record);
+    }
 
-  /**
-   * Performs a filtered search with sorting and pagination
-   * @param {Object} options - Query options
-   * @param {Record<string, any>} [options.where={}] - Filter conditions
-   * @param {Array<{column: string, direction: 'asc'|'desc'}>} [options.orderBy=[]] - Sorting criteria
-   * @param {number} [options.limit] - Maximum number of records to return
-   * @param {number} [options.offset] - Number of records to skip
-   * @param {string[]} [options.columns=['*']] - Columns to select
-   * @returns {Promise<Record<string, any>[]>} Array of matching records
-   */
-  async find({
-    where = {},
-    orderBy = [],
-    limit,
-    offset,
-    columns = ['*']
-  }: {
-    where?: Record<string, any>;
-    orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
-    limit?: number;
-    offset?: number;
-    columns?: string[];
-  }): Promise<Record<string, any>[]> {
-    let query = this.knex(this.tableName)
-      .where(where)
-      .select(columns);
+    async update(criteria: Record<string, any>, updates: Record<string, any>): Promise<number> {
+        // MySQL doesn't support comparing encrypted data easily
+        // So we need to fetch first, decrypt and compare
+        const records = await this.find({ where: criteria });
+        if (records.length === 0) return 0;
+        
+        const encryptedUpdates = this.encryptData(updates);
+        return this.knex(this.tableName)
+            .whereIn(this.idColumn, records.map(r => r[this.idColumn]))
+            .update(encryptedUpdates);
+    }
 
-    orderBy.forEach(({ column, direction }) => {
-      query = query.orderBy(column, direction);
-    });
+    async delete(criteria: Record<string, any>): Promise<number> {
+        // Similar approach to update for MySQL
+        const records = await this.find({ where: criteria });
+        if (records.length === 0) return 0;
+        
+        return this.knex(this.tableName)
+            .whereIn(this.idColumn, records.map(r => r[this.idColumn]))
+            .del();
+    }
 
-    if (limit) query = query.limit(limit);
-    if (offset) query = query.offset(offset);
+    // === Query Methods ===
+    async find({
+        where = {},
+        orderBy = [],
+        limit,
+        offset,
+        columns = ['*']
+    }: {
+        where?: Record<string, any>;
+        orderBy?: Array<{ column: string; direction: 'asc' | 'desc' }>;
+        limit?: number;
+        offset?: number;
+        columns?: string[];
+    }): Promise<Record<string, any>[]> {
+        // For MySQL, we need to fetch all and filter in memory
+        // Not efficient for large datasets but necessary for encrypted data
+        let query = this.knex(this.tableName).select(columns);
 
-    return query;
-  }
+        // Apply sorting if specified
+        orderBy.forEach(({ column, direction }) => {
+            query = query.orderBy(column, direction);
+        });
 
-  /**
-   * Counts records matching the criteria
-   * @param {Record<string, any>} [where={}] - Filter conditions
-   * @returns {Promise<number>} Total count of matching records
-   */
-  async count(where: Record<string, any> = {}): Promise<number> {
-    const result = await this.knex(this.tableName)
-      .where(where)
-      .count('* as total')
-      .first();
-    
-    return Number(result?.total) || 0;
-  }
+        if (limit) query = query.limit(limit);
+        if (offset) query = query.offset(offset);
 
-  // === Utility Methods ===
+        const results = await query;
+        const decryptedResults = results.map(item => this.decryptData(item));
+        
+        // Apply where filters in memory
+        return decryptedResults.filter(item => {
+            for (const [key, value] of Object.entries(where)) {
+                if (item[key] !== value) return false;
+            }
+            return true;
+        });
+    }
 
-  /**
-   * Checks if the table exists in the database
-   * @returns {Promise<boolean>} True if table exists
-   */
-  async tableExists(): Promise<boolean> {
-    return this.knex.schema.hasTable(this.tableName);
-  }
+    async count(where: Record<string, any> = {}): Promise<number> {
+        const results = await this.find({ where });
+        return results.length;
+    }
 
-  /**
-   * Retrieves the table structure/columns from database metadata
-   * @returns {Promise<Record<string, string>>} Object mapping column names to data types
-   */
-  async getTableStructure(): Promise<Record<string, string>> {
-    return this.knex
-      .select('column_name', 'data_type')
-      .from('information_schema.columns')
-      .where('table_name', this.tableName)
-      .then(rows => 
-        rows.reduce((acc, row) => ({
-          ...acc,
-          [row.column_name]: row.data_type
-        }), {})
-      );
-  }
+    // === Utility Methods ===
+    async tableExists(): Promise<boolean> {
+        return this.knex.schema.hasTable(this.tableName);
+    }
 }
