@@ -4,10 +4,12 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 
-export function Controller(prefix: string = ''): ClassDecorator {
-  return function <T extends { new (...args: any[]): {} }>(TargetClass: T) {
+
+export function Controller(prefix: string = '') {
+  return function <T extends new (...args: any[]) => {}>(TargetClass: T): 
+    new (...args: ConstructorParameters<T>) => InstanceType<T> & WithRouter {
     return class extends TargetClass {
-      private readonly _router: Router = Router();
+      private readonly _router = Router();
 
       constructor(...args: any[]) {
         super(...args);
@@ -15,32 +17,30 @@ export function Controller(prefix: string = ''): ClassDecorator {
       }
 
       private registerRoutes(): void {
-        const routes: RouteDefinition[] = Reflect.getMetadata('routes', TargetClass) || [];
-
+        const routes = Reflect.getMetadata('routes', TargetClass) || [];
         routes.forEach(({ method, path, handlerName, middlewares }) => {
-          const handler = this[handlerName].bind(this);
+          const handler = (this as any)[handlerName].bind(this);
           const handlerWithParams = injectParams(handler, this, handlerName);
           this._router[method](
             `${prefix}${path}`,
             ...middlewares,
-            async (req: Request, res: Response, next: NextFunction) => {
+            async (req, res, next) => {
               try {
                 await handlerWithParams(req, res, next);
-              } catch (error) {
-                next(error);
+              } catch (err) {
+                next(err);
               }
             }
           );
         });
       }
 
-      public get router(): Router {
+      public get router() {
         return this._router;
       }
     };
   };
 }
-
 
 
 
