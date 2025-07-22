@@ -59,3 +59,41 @@ export function Controller(prefix: string = ''): ClassDecorator {
   };
 }
 
+function injectParams(
+  handler: (...args: any[]) => any,
+  context: unknown,
+  handlerName: string
+): (...args: [Request, Response, NextFunction]) => Promise<void> {
+  return async (req, res, next) => {
+    const bodyParams: PathParamMetadata[] = Reflect.getMetadata('bodyParams', context, handlerName) || [];
+    const queryParams: PathParamMetadata[] = Reflect.getMetadata('queryParams', context, handlerName) || [];
+    const pathParams: PathParamMetadata[] = Reflect.getMetadata('pathParams', context, handlerName) || [];
+
+    const totalArgs = handler.length;
+    const args: any[] = new Array(totalArgs);
+
+    // Inject parameters
+    for (const { index, name } of [...bodyParams, ...queryParams, ...pathParams]) {
+      const source =
+        bodyParams.find(p => p.index === index) ? 'body' :
+        queryParams.find(p => p.index === index) ? 'query' : 'params';
+
+      args[index] = name ? req[source][name] : req[source];
+    }
+
+    // Fallback: inject req, res, next at the end if not already decorated
+    if (!args.includes(req)) args[totalArgs - 3] = req;
+    if (!args.includes(res)) args[totalArgs - 2] = res;
+    if (!args.includes(next)) args[totalArgs - 1] = next;
+
+    try {
+      const result = await handler.apply(context, args);
+      if (res.headersSent) return;
+      if (result !== undefined) {
+        res.json(result);
+      }
+    } catch (err) {
+      next(err);
+    }
+  };
+}
