@@ -16,7 +16,6 @@ interface RouteDefinition {
   middlewares: RequestHandler[];
 }
 
-// Simulation de l’injection de paramètres décorés (tu peux l'adapter ensuite)
 function injectParams(
   handler: (...args: any[]) => any,
   context: unknown,
@@ -27,26 +26,27 @@ function injectParams(
   };
 }
 
-// Interface à implémenter pour exposer le router
+// Interface pour exposer le router
 export interface IController {
-  readonly router: Router;
+  router: Router;
 }
 
 // Décorateur @Controller
-export function Controller(prefix = ''): ClassDecorator {
-  return function <T extends new (...args: any[]) => {}>(TargetClass: T): T {
-    return class extends TargetClass implements IController {
-      private readonly _router: Router = Router();
+export function Controller(prefix = '') {
+  return function <T extends { new (...args: any[]): {} }>(OriginalClass: T): T {
+    return class extends OriginalClass implements IController {
+      private readonly _router: Router;
 
       constructor(...args: any[]) {
         super(...args);
+        this._router = Router();
         this.registerRoutes();
       }
 
       private registerRoutes(): void {
-        const routes: RouteDefinition[] = Reflect.getMetadata('routes', TargetClass) || [];
+        const routes: RouteDefinition[] = Reflect.getMetadata('routes', OriginalClass) || [];
 
-        routes.forEach(({ method, path, handlerName, middlewares }) => {
+        for (const { method, path, handlerName, middlewares } of routes) {
           const handler = (this as any)[handlerName].bind(this);
           const handlerWithParams = injectParams(handler, this, handlerName);
 
@@ -56,12 +56,12 @@ export function Controller(prefix = ''): ClassDecorator {
             async (req: Request, res: Response, next: NextFunction) => {
               try {
                 await handlerWithParams(req, res, next);
-              } catch (error) {
-                next(error);
+              } catch (err) {
+                next(err);
               }
             }
           );
-        });
+        }
       }
 
       public get router(): Router {
@@ -70,6 +70,5 @@ export function Controller(prefix = ''): ClassDecorator {
     };
   };
 }
-
 
 
