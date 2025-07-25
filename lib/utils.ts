@@ -68,4 +68,25 @@ export const Param = createParamDecorator('path');
   };
 } 
 
+ export function createController(ControllerClass: new () => any): Router {
+  const instance = new ControllerClass();
+  const router = Router();
+
+  const prefix: string = Reflect.getMetadata('prefix', ControllerClass) || '';
+  const routes: RouteDefinition[] = Reflect.getMetadata('routes', ControllerClass) || [];
+
+  for (const { method, path, handlerName, middlewares } of routes) {
+    const handler = instance[handlerName].bind(instance);
+    const injectedHandler = injectParams(handler, instance, handlerName); // ⭐ Ici
+
+    router[method](
+      `${prefix}${path}`,
+      ...middlewares,
+      injectedHandler // ← Handler avec paramètres injectés
+    );
+  }
+
+  return router;
+} 
+
 
