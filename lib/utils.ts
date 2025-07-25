@@ -8,56 +8,75 @@ export function cn(...inputs: ClassValue[]) {
                  
 import type { PathParamMetadata } from './types/decorators.type';
 
-const createParamDecorator = (type: 'body' | 'query' | 'path') => {
-  return (name?: string): ParameterDecorator => {
-    return (target: Object, propertyKey: string | symbol, parameterIndex: number) => {
-      if (!propertyKey) {
-        throw new Error(`@${type.charAt(0).toUpperCase() + type.slice(1)} must be used on a method parameter`);
+import 'reflect-metadata';
+import { Request } from 'express';
+
+export function Body(name?: string): ParameterDecorator {
+  return (target: any, propertyKey: string | symbol, parameterIndex: number) => {
+    const metadataKey = `bodyParams`;
+    const existing: { index: number; name?: string }[] = 
+      Reflect.getMetadata(metadataKey, target, propertyKey) || [];
+    
+    existing.push({ index: parameterIndex, name });
+    Reflect.defineMetadata(metadataKey, existing, target, propertyKey);
+  };
+}
+
+import { plainToClass, ClassConstructor } from 'class-transformer';
+import { validate } from 'class-validator';
+import { RequestHandler } from 'express';
+
+export function ValidateBody<T extends object>(dtoClass: ClassConstructor<T>): MethodDecorator {
+  return (target: any, propertyKey: string | symbol, descriptor: PropertyDescriptor) => {
+    const originalMethod = descriptor.value;
+    
+    descriptor.value = async function (req: any, res: any, next: any) {
+      try {
+        const dtoInstance = plainToClass(dtoClass, req.body);
+        const errors = await validate(dtoInstance);
+        
+        if (errors.length > 0) {
+          return res.status(400).json({
+            message: 'Validation failed',
+            errors: errors.map(err => ({
+              property: err.property,
+              constraints: err.constraints
+            }))
+          });
+        }
+        
+        req.validatedBody = dtoInstance;
+        return originalMethod.apply(this, [req, res, next]);
+      } catch (err) {
+        next(err);
       }
-
-      const metadataKey = `${type}Params`;
-      const existingParams: PathParamMetadata[] = 
-        Reflect.getMetadata(metadataKey, target, propertyKey) || [];
-
-      existingParams.push({ 
-        index: parameterIndex, 
-        name: name || null // null = tout l'objet
-      });
-
-      Reflect.defineMetadata(metadataKey, existingParams, target, propertyKey);
     };
   };
-};
+}
 
-export const Body = createParamDecorator('body');
-export const Query = createParamDecorator('query');
-export const Param = createParamDecorator('path');
- function injectParams(
-  handler: Function, 
-  context: any, 
-  handlerName: string
-) {
+function injectParams(handler: Function, context: any, handlerName: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const bodyParams: PathParamMetadata[] = Reflect.getMetadata('bodyParams', context, handlerName) || [];
-    const queryParams: PathParamMetadata[] = Reflect.getMetadata('queryParams', context, handlerName) || [];
-    const pathParams: PathParamMetadata[] = Reflect.getMetadata('pathParams', context, handlerName) || [];
-    
     const args = new Array(handler.length);
+    const bodyParams: { index: number; name?: string }[] = 
+      Reflect.getMetadata('bodyParams', context, handlerName) || [];
 
-    // Injection des paramètres
-    [...bodyParams, ...queryParams, ...pathParams].forEach(({ index, name }) => {
-      const source = 
-        bodyParams.some(p => p.index === index) ? req.body :
-        queryParams.some(p => p.index === index) ? req.query :
-        req.params;
-
-      args[index] = name ? source[name] : source; // Si pas de nom, on prend tout l'objet
+    // Injection pour @Body()
+    bodyParams.forEach(({ index, name }) => {
+      args[index] = name ? req.body[name] : req.body;
     });
 
-    // Injection de req/res/next aux 3 dernières positions si manquants
-    if (!args.includes(req)) args[args.length - 3] = req;
-    if (!args.includes(res)) args[args.length - 2] = res;
-    if (!args.includes(next)) args[args.length - 1] = next;
+    // Injection pour req.validatedBody (venant de @ValidateBody)
+    if (req.validatedBody) {
+      const validateIndex = bodyParams.find(p => !p.name)?.index;
+      if (validateIndex !== undefined) {
+        args[validateIndex] = req.validatedBody;
+      }
+    }
+
+    // Injection standard req/res/next
+    args[args.length - 3] = req;
+    args[args.length - 2] = res;
+    args[args.length - 1] = next;
 
     try {
       const result = await handler.apply(context, args);
@@ -66,27 +85,4 @@ export const Param = createParamDecorator('path');
       next(err);
     }
   };
-} 
-
- export function createController(ControllerClass: new () => any): Router {
-  const instance = new ControllerClass();
-  const router = Router();
-
-  const prefix: string = Reflect.getMetadata('prefix', ControllerClass) || '';
-  const routes: RouteDefinition[] = Reflect.getMetadata('routes', ControllerClass) || [];
-
-  for (const { method, path, handlerName, middlewares } of routes) {
-    const handler = instance[handlerName].bind(instance);
-    const injectedHandler = injectParams(handler, instance, handlerName); // ⭐ Ici
-
-    router[method](
-      `${prefix}${path}`,
-      ...middlewares,
-      injectedHandler // ← Handler avec paramètres injectés
-    );
-  }
-
-  return router;
-} 
-
-
+}
