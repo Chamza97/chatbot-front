@@ -4,15 +4,6 @@ import { twMerge } from "tailwind-merge";
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 
-riginalMethod.call(this, req, res, next);
-                } catch (error) {
-                    next(error);
-                }
-            };
-            return descriptor;
-        };
-    };
-};
 import type { PathParamMetadata } from './types/decorators.type';
 
 const createParamDecorator = (type: 'body' | 'query' | 'path') => {
@@ -39,7 +30,6 @@ const createParamDecorator = (type: 'body' | 'query' | 'path') => {
 export const Body = createParamDecorator('body');
 export const Query = createParamDecorator('query');
 export const Param = createParamDecorator('path');
-
 
 
 function injectParams(
