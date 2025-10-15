@@ -79,4 +79,104 @@ apiClient.interceptors.response.use(
       if (error.config.__retryCount <= error.config.__maxRetries) {
         console.log(
           `⏳ Gateway timeout (${error.config.__retryCount}/${error.config.__maxRetries}) - ` +
-          `Retry silencieux dans 3s... (L'util
+          `Retry silencieux dans 3s... (L'utilisateur ne voit rien)`
+        );
+
+        // Attends 3 secondes
+        await new Promise<void>(resolve => setTimeout(resolve, 3000)); // 🔴 AJOUTÉ <void> 🔴
+
+        // RE-ENVOIE la requête (TRANSPARENT pour l'utilisateur)
+        return apiClient.request(error.config);
+      } else {
+        // Après 30 tentatives (90 secondes), on abandonne
+        console.error('❌ Timeout définitif après 30 tentatives');
+        return Promise.reject(
+          new ApiError(
+            "Le serveur ne répond toujours pas après plusieurs minutes",
+            504,
+            "GATEWAY_TIMEOUT_MAX_RETRIES",
+            error.config.url || ""
+          )
+        );
+      }
+    }
+    // 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
+    // 🔴 FIN GESTION 504 🔴
+    // 🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴🔴
+
+    if (error.response) {
+      // Cas spécial : requête blob qui retourne une erreur
+      if (
+        error.config?.responseType === "blob" &&
+        error.response.data instanceof Blob
+      ) {
+        try {
+          // Convertir le blob en texte pour récupérer le message d'erreur JSON
+          const text = await error.response.data.text();
+          const apiResponse = JSON.parse(text) as ApiResponse;
+          if (
+            !isSuccessResponse(apiResponse) &&
+            error.response.status === 401
+          ) {
+            localStorage.setItem(ACCESS_TOKEN_KEY, '');
+            window.location.reload();
+          }
+          
+          if (apiResponse && !isSuccessResponse(apiResponse)) {
+            const customError = new ApiError(
+              apiResponse.message,
+              error.response.status,
+              apiResponse.code,
+              apiResponse.route,
+            );
+            return Promise.reject(customError);
+          }
+        } catch (parseError) {
+          // Si on ne peut pas parser le blob, utiliser le message d'erreur par défaut
+          const customError = new ApiError(
+            "Erreur lors du traitement de la réponse",
+            error.response.status,
+          );
+          return Promise.reject(customError);
+        }
+      }
+
+      // Cas normal : réponse JSON
+      const apiResponse = error.response.data as ApiResponse;
+      if (apiResponse && !isSuccessResponse(apiResponse)) {
+        if (!isSuccessResponse(apiResponse) && error.response.status === 401) {
+          localStorage.setItem(ACCESS_TOKEN_KEY, '');
+          window.location.reload();
+        }
+        
+        const customError = new ApiError(
+          apiResponse.message,
+          error.response.status,
+          apiResponse.code,
+          apiResponse.route,
+        );
+        return Promise.reject(customError);
+      }
+    } else if (error.request) {
+      // La requête a été envoyée mais pas de réponse
+      return Promise.reject(new ApiError("Erreur réseau", 0));
+    } else {
+      // Erreur dans la configuration de la requête
+      return Promise.reject(new ApiError("Erreur de configuration", 0));
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number,
+    public code?: string,
+    public route?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
