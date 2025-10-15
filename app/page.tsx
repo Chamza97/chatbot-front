@@ -2,23 +2,12 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '@/utils/logger';
 
-interface ProcessCache {
-  promise: Promise<unknown>;
+interface ProcessInfo {
   startTime: number;
-  responseData?: unknown;
-  isCompleted: boolean;
+  pendingResponses: Response[];
 }
 
-interface ProcessStats {
-  total: number;
-  processes: Array<{
-    requestId: string;
-    elapsed: number;
-    isCompleted: boolean;
-  }>;
-}
-
-const processCache = new Map<string, ProcessCache>();
+const activeProcesses = new Map<string, ProcessInfo>();
 const PROCESS_TIMEOUT = 300000; // 5 minutes
 
 export function singleProcessMiddleware(
@@ -37,76 +26,79 @@ export function singleProcessMiddleware(
     return;
   }
 
-  Logger.debug(`[SingleProcess] - Request received: ${requestId} - ${req.method} ${req.path}`);
+  Logger.debug(`[SingleProcess] - Request received: ${requestId}`);
 
-  const existing = processCache.get(requestId);
+  const existing = activeProcesses.get(requestId);
 
   if (existing) {
     const elapsed = Date.now() - existing.startTime;
 
     if (elapsed > PROCESS_TIMEOUT) {
-      Logger.warn(`[SingleProcess] - Request ${requestId} timeout (${elapsed}ms), cleaning and restarting`);
-      processCache.delete(requestId);
-    } else if (existing.isCompleted) {
-      Logger.info(`[SingleProcess] - Request ${requestId} already completed, returning cached result`);
-      res.json(existing.responseData);
-      return;
+      Logger.warn(`[SingleProcess] - Process ${requestId} timeout, cleaning and restarting`);
+      activeProcesses.delete(requestId);
     } else {
-      Logger.info(`[SingleProcess] - Request ${requestId} already in progress (${elapsed}ms), waiting...`);
-      
-      existing.promise
-        .then((data: unknown) => {
-          res.json(data);
-        })
-        .catch((error: Error) => {
-          next(error);
-        });
-      
-      return;
+      Logger.info(`[SingleProcess] - Process ${requestId} already running (${elapsed}ms), queuing response`);
+      existing.pendingResponses.push(res);
+      return; // N'appelle PAS next()
     }
   }
 
-  Logger.info(`[SingleProcess] - New process starting: ${requestId}`);
-
-  let resolvePromise: (value: unknown) => void;
-  let rejectPromise: (reason: Error) => void;
-
-  const promise = new Promise<unknown>((resolve, reject) => {
-    resolvePromise = resolve;
-    rejectPromise = reject;
-  });
-
-  const cacheEntry: ProcessCache = {
-    promise,
+  // Nouveau processus
+  Logger.info(`[SingleProcess] - Starting new process: ${requestId}`);
+  
+  activeProcesses.set(requestId, {
     startTime: Date.now(),
-    isCompleted: false
-  };
-
-  processCache.set(requestId, cacheEntry);
-
-  const originalJson = res.json.bind(res);
-  res.json = function(data: unknown): Response {
-    Logger.info(`[SingleProcess] - Request ${requestId} completed successfully`);
-    
-    cacheEntry.isCompleted = true;
-    cacheEntry.responseData = data;
-    resolvePromise(data);
-
-    setTimeout(() => {
-      processCache.delete(requestId);
-      Logger.debug(`[SingleProcess] - Request ${requestId} cleaned from cache`);
-    }, 30000);
-
-    return originalJson(data);
-  };
-
-  res.on('finish', () => {
-    if (res.statusCode >= 400) {
-      Logger.error(`[SingleProcess] - Request ${requestId} failed with status ${res.statusCode}`);
-      rejectPromise(new Error(`Request failed with status ${res.statusCode}`));
-      processCache.delete(requestId);
-    }
+    pendingResponses: [res]
   });
+
+  // Intercepte quand la réponse est envoyée
+  const originalSend = res.send.bind(res);
+  const originalJson = res.json.bind(res);
+
+  const handleResponse = (data: unknown, sendFn: (data: unknown) => Response): Response => {
+    const processInfo = activeProcesses.get(requestId);
+    
+    if (!processInfo) {
+      Logger.warn(`[SingleProcess] - Process ${requestId} not found in cache`);
+      return sendFn(data);
+    }
+
+    const statusCode = res.statusCode;
+    Logger.info(`[SingleProcess] - Process ${requestId} completed with status ${statusCode}`);
+
+    // Envoie la réponse à TOUTES les requêtes en attente
+    processInfo.pendingResponses.forEach((pendingRes, index) => {
+      if (pendingRes === res) {
+        Logger.debug(`[SingleProcess] - Sending response to original request`);
+      } else {
+        Logger.debug(`[SingleProcess] - Sending response to waiting request #${index + 1}`);
+        
+        // Copie le status code et headers
+        pendingRes.status(statusCode);
+        Object.entries(res.getHeaders()).forEach(([key, value]) => {
+          if (value !== undefined) {
+            pendingRes.setHeader(key, value as string | number | readonly string[]);
+          }
+        });
+        
+        pendingRes.send(data);
+      }
+    });
+
+    // Nettoie immédiatement
+    activeProcesses.delete(requestId);
+    Logger.debug(`[SingleProcess] - Process ${requestId} cleaned from cache`);
+
+    return sendFn(data);
+  };
+
+  res.send = function(data: unknown): Response {
+    return handleResponse(data, originalSend);
+  };
+
+  res.json = function(data: unknown): Response {
+    return handleResponse(data, originalJson);
+  };
 
   next();
 }
@@ -116,33 +108,110 @@ export function startProcessCleanup(): void {
     const now = Date.now();
     let cleaned = 0;
 
-    for (const [requestId, cache] of processCache.entries()) {
-      const elapsed = now - cache.startTime;
+    for (const [requestId, info] of activeProcesses.entries()) {
+      const elapsed = now - info.startTime;
       if (elapsed > PROCESS_TIMEOUT) {
-        processCache.delete(requestId);
+        Logger.warn(`[SingleProcess] - Timeout cleanup for ${requestId}`);
+        
+        // Envoie timeout à toutes les requêtes en attente
+        info.pendingResponses.forEach(res => {
+          if (!res.headersSent) {
+            res.status(504).json({
+              message: 'Process timeout',
+              code: 'PROCESS_TIMEOUT'
+            });
+          }
+        });
+        
+        activeProcesses.delete(requestId);
         cleaned++;
       }
     }
 
     if (cleaned > 0) {
-      Logger.info(`[SingleProcess] - Cleanup: ${cleaned} expired process(es) removed`);
+      Logger.info(`[SingleProcess] - Cleanup: ${cleaned} timeout process(es)`);
     }
   }, 60000);
 }
 
-export function getProcessStats(): ProcessStats {
-  const stats: ProcessStats = {
-    total: processCache.size,
-    processes: []
+export function getProcessStats(): {
+  total: number;
+  processes: Array<{
+    requestId: string;
+    elapsed: number;
+    waitingRequests: number;
+  }>;
+} {
+  const stats = {
+    total: activeProcesses.size,
+    processes: [] as Array<{
+      requestId: string;
+      elapsed: number;
+      waitingRequests: number;
+    }>
   };
 
-  for (const [requestId, cache] of processCache.entries()) {
+  for (const [requestId, info] of activeProcesses.entries()) {
     stats.processes.push({
       requestId,
-      elapsed: Date.now() - cache.startTime,
-      isCompleted: cache.isCompleted
+      elapsed: Date.now() - info.startTime,
+      waitingRequests: info.pendingResponses.length
     });
   }
 
   return stats;
 }
+```
+
+---
+
+## 🎯 Comment ça fonctionne maintenant
+
+### **Principe ultra-simple :**
+
+1. **Première requête (Request ID: abc123)** arrive
+   - Ajoute `res` dans une liste d'attente
+   - Continue vers le controller (`next()`)
+
+2. **Deuxième requête (même ID: abc123)** arrive pendant le traitement
+   - Ajoute simplement ce `res` dans la liste d'attente
+   - **N'appelle PAS `next()`** → Pas de nouveau traitement
+
+3. **Le controller termine** et fait `res.send(fichier)` ou `res.json(data)`
+   - Le middleware intercepte
+   - **Envoie la même réponse à TOUTES les requêtes en attente**
+   - Nettoie immédiatement
+
+---
+
+## ✅ Avantages
+
+✅ **Pas de stockage** de la réponse en mémoire  
+✅ **Gère automatiquement** JSON, Buffer, fichiers, tout  
+✅ **Les erreurs 400/500** sont envoyées à toutes les requêtes  
+✅ **Headers copiés** automatiquement  
+✅ **Ultra simple** et léger  
+
+---
+
+## 📊 Exemple concret
+```
+T=0s:   Request #1 (ID: abc123) → Traitement démarre
+        activeProcesses.set("abc123", { pendingResponses: [res1] })
+
+T=25s:  Request #2 (ID: abc123) → Gateway va timeout
+        activeProcesses.get("abc123").pendingResponses.push(res2)
+        → N'exécute PAS le traitement
+
+T=30s:  Gateway timeout pour Request #1 et #2 (côté gateway)
+
+T=33s:  Request #3 (ID: abc123) → Retry frontend
+        activeProcesses.get("abc123").pendingResponses.push(res3)
+
+T=60s:  Controller termine: res.send(zipBuffer)
+        → Middleware intercepte
+        → Envoie zipBuffer à res1, res2, res3
+        → activeProcesses.delete("abc123")
+
+✅ Les 3 requêtes reçoivent le fichier
+✅ Un seul traitement exécuté
