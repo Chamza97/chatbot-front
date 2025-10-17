@@ -1,414 +1,582 @@
-// src/middlewares/single-process.middleware.ts
-import { Request, Response, NextFunction } from 'express';
-import { Logger } from '@/utils/logger';
+// ============================================
+// vite.config.ts - Configuration Vite pour Express
+// ============================================
+import { defineConfig } from 'vite';
+import { VitePluginNode } from 'vite-plugin-node';
 
-interface ProcessInfo {
-  startTime: number;
-  pendingResponses: Response[];
-}
-// src/api/axios-client.ts
-import axios, { type AxiosError, type AxiosResponse } from "axios";
-import { AUTH_CONSTANTS } from "@/constants/auth.constants";
-import { type ApiResponse, isSuccessResponse } from "@/types/api-response.type";
-import { API_URL } from "../config";
-import { ACCESS_TOKEN_KEY } from "@constants/shared-constants";
-import { v4 as uuidv4 } from 'uuid';
-
-declare module 'axios' {
-  export interface AxiosRequestConfig {
-    __retryCount?: number;
-    __maxRetries?: number;
-    __requestId?: string;
-  }
-}
-
-export const apiClient = axios.create({
-  baseURL: API_URL || "",
-  timeout: 0,
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: localStorage.getItem(AUTH_CONSTANTS.ACCESS_TOKEN_KEY),
+export default defineConfig({
+  server: {
+    port: 3000
   },
+  plugins: [
+    ...VitePluginNode({
+      adapter: 'express',
+      appPath: './src/app.ts',
+      exportName: 'app',
+      tsCompiler: 'esbuild'
+    })
+  ],
+  build: {
+    outDir: 'dist',
+    lib: {
+      entry: './src/app.ts',
+      formats: ['es']
+    },
+    rollupOptions: {
+      external: ['express', 'node-cron', 'winston']
+    }
+  }
 });
 
-// ========================================
-// INTERCEPTOR REQUEST
-// ========================================
-apiClient.interceptors.request.use(
-  (config) => {
-    // Ajoute le token
-    const token = localStorage.getItem(AUTH_CONSTANTS.ACCESS_TOKEN_KEY);
-    if (token) {
-      config.headers["Authorization"] = `Bearer ${token}`;
-    }
-    
-    // 🆕 Génère ou réutilise le Request ID pour TOUTES les requêtes
-    if (!config.__requestId) {
-      config.__requestId = uuidv4();
-    }
-    config.headers['X-Request-ID'] = config.__requestId;
-    
-    console.log(`📤 [${config.method?.toUpperCase()}] Request ID: ${config.__requestId} → ${config.url}`);
-    
-    return config;
+// ============================================
+// tsconfig.json
+// ============================================
+/*
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "lib": ["ES2020"],
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "resolveJsonModule": true,
+    "outDir": "dist",
+    "rootDir": "src"
   },
-  (error: AxiosError) => {
-    console.error('❌ Request error:', error);
-    return Promise.reject(error);
-  }
-);
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+*/
 
-// ========================================
-// INTERCEPTOR RESPONSE (reste identique)
-// ========================================
-apiClient.interceptors.response.use(
-  (response: AxiosResponse<ApiResponse>) => {
-    if (response.config.responseType === "blob") {
-      console.log(`✅ [${response.status}] Blob response → Request ID: ${response.config.__requestId}`);
-      return response;
-    }
+// ============================================
+// src/types/cron.types.ts
+// ============================================
+export interface CronMetadata {
+  target: new (...args: unknown[]) => unknown;
+  methodName: string;
+  schedule: string;
+  lastExecution?: Date;
+  lastStatus?: 'success' | 'error';
+  errorCount: number;
+}
 
-    console.log(`✅ [${response.status}] Response → Request ID: ${response.config.__requestId}`);
+export interface CronStatus {
+  name: string;
+  schedule: string;
+  lastExecution?: Date;
+  lastStatus?: 'success' | 'error';
+  errorCount: number;
+  isHealthy: boolean;
+}
 
-    if (isSuccessResponse(response.data)) {
-      return {
-        ...response,
-        data: response.data.data,
-      };
-    } else {
-      const error = new ApiError(
-        response.data.message,
-        response.status,
-        response.data.code,
-        response.data.route,
-      );
-      return Promise.reject(error);
-    }
-  },
-  async (error: AxiosError) => {
-    const requestId = error.config?.__requestId || 'unknown';
+export interface LogMeta {
+  duration?: number;
+  errorCount?: number;
+  schedule?: string;
+  [key: string]: unknown;
+}
+
+// ============================================
+// src/decorators/cron.decorator.ts
+// ============================================
+import cron from 'node-cron';
+import { Logger } from '../services/logger.service';
+import type { CronMetadata, CronStatus } from '../types/cron.types';
+
+const cronJobs: CronMetadata[] = [];
+
+export function Cron(schedule: string) {
+  return function (
+    target: unknown,
+    propertyKey: string,
+    descriptor: PropertyDescriptor
+  ): void {
+    const originalMethod = descriptor.value;
     
-    // ========================================
-    // GESTION DU 504 AVEC RETRY
-    // ========================================
-    if (error.response?.status === 504 && error.config) {
-      if (!error.config.__retryCount) {
-        error.config.__retryCount = 0;
-        error.config.__maxRetries = 30;
-      }
+    cronJobs.push({
+      target: target.constructor as new (...args: unknown[]) => unknown,
+      methodName: propertyKey,
+      schedule,
+      errorCount: 0
+    });
+    
+    descriptor.value = originalMethod;
+  };
+}
 
-      error.config.__retryCount += 1;
-
-      if (error.config.__retryCount <= error.config.__maxRetries) {
-        console.log(
-          `⏳ [504] Gateway timeout (${error.config.__retryCount}/${error.config.__maxRetries}) - ` +
-          `Retry dans 3s → Request ID: ${requestId}`
-        );
-
-        await new Promise<void>(resolve => setTimeout(resolve, 3000));
-        return apiClient.request(error.config);
-      } else {
-        console.error(`❌ [504] Max retry atteint → Request ID: ${requestId}`);
-        return Promise.reject(
-          new ApiError(
-            "Le serveur ne répond pas après plusieurs minutes",
-            504,
-            "GATEWAY_TIMEOUT_MAX_RETRIES",
-            error.config.url || ""
-          )
-        );
-      }
-    }
-
-    // ========================================
-    // GESTION DES ERREURS BLOB
-    // ========================================
-    if (error.response) {
-      if (
-        error.config?.responseType === "blob" &&
-        error.response.data instanceof Blob
-      ) {
+export function initializeCrons(instances: unknown[]): void {
+  cronJobs.forEach((metadata: CronMetadata) => {
+    const { target, methodName, schedule } = metadata;
+    const instance = instances.find((inst) => inst instanceof target);
+    
+    if (instance && typeof instance === 'object' && methodName in instance) {
+      cron.schedule(schedule, async () => {
+        const startTime = Date.now();
+        
         try {
-          const text = await error.response.data.text();
-          const apiResponse = JSON.parse(text) as ApiResponse;
+          Logger.info(`🔄 Démarrage: ${target.name}.${methodName}`);
           
-          console.error(`❌ [${error.response.status}] Blob error → Request ID: ${requestId}`, apiResponse.message);
+          const method = (instance as Record<string, unknown>)[methodName];
           
-          if (
-            !isSuccessResponse(apiResponse) &&
-            error.response.status === 401
-          ) {
-            localStorage.setItem(ACCESS_TOKEN_KEY, '');
-            window.location.reload();
+          if (typeof method === 'function') {
+            // Timeout de sécurité (5 minutes max)
+            await Promise.race([
+              method.call(instance),
+              new Promise<never>((_, reject) => 
+                setTimeout(() => reject(new Error('Cron timeout après 5 minutes')), 5 * 60 * 1000)
+              )
+            ]);
           }
           
-          if (apiResponse && !isSuccessResponse(apiResponse)) {
-            const customError = new ApiError(
-              apiResponse.message,
-              error.response.status,
-              apiResponse.code,
-              apiResponse.route,
-            );
-            return Promise.reject(customError);
-          }
-        } catch (parseError) {
-          console.error(`❌ [${error.response.status}] Blob parse error → Request ID: ${requestId}`);
-          const customError = new ApiError(
-            "Erreur lors du traitement de la réponse",
-            error.response.status,
+          const duration = Date.now() - startTime;
+          metadata.lastExecution = new Date();
+          metadata.lastStatus = 'success';
+          metadata.errorCount = 0;
+          
+          Logger.info(`✅ Terminé: ${target.name}.${methodName} (${duration}ms)`);
+          
+        } catch (error) {
+          const duration = Date.now() - startTime;
+          metadata.lastStatus = 'error';
+          metadata.errorCount += 1;
+          
+          // Log l'erreur sans crasher l'application
+          Logger.error(
+            `❌ Erreur dans ${target.name}.${methodName}`,
+            error instanceof Error ? error : new Error(String(error)),
+            {
+              duration,
+              errorCount: metadata.errorCount,
+              schedule
+            }
           );
-          return Promise.reject(customError);
+          
+          // Alerte après 3 échecs consécutifs
+          if (metadata.errorCount >= 3) {
+            Logger.alert(
+              `🚨 ALERTE CRITIQUE: ${target.name}.${methodName} a échoué ${metadata.errorCount} fois consécutives`
+            );
+          }
         }
-      }
-
-      // ========================================
-      // CAS NORMAL : RÉPONSE JSON
-      // ========================================
-      const apiResponse = error.response.data as ApiResponse;
-      if (apiResponse && !isSuccessResponse(apiResponse)) {
-        console.error(`❌ [${error.response.status}] ${apiResponse.message} → Request ID: ${requestId}`);
-        
-        if (!isSuccessResponse(apiResponse) && error.response.status === 401) {
-          localStorage.setItem(ACCESS_TOKEN_KEY, '');
-          window.location.reload();
-        }
-        
-        const customError = new ApiError(
-          apiResponse.message,
-          error.response.status,
-          apiResponse.code,
-          apiResponse.route,
-        );
-        return Promise.reject(customError);
-      }
-    } else if (error.request) {
-      console.error(`❌ Network error → Request ID: ${requestId}`);
-      return Promise.reject(new ApiError("Erreur réseau", 0));
-    } else {
-      console.error(`❌ Config error → Request ID: ${requestId}`);
-      return Promise.reject(new ApiError("Erreur de configuration", 0));
+      });
+      
+      Logger.info(`✓ Cron planifié: ${target.name}.${methodName} - ${schedule}`);
     }
+  });
+}
 
-    return Promise.reject(error);
+export function getCronStatus(): CronStatus[] {
+  return cronJobs.map((job: CronMetadata) => ({
+    name: `${job.target.name}.${job.methodName}`,
+    schedule: job.schedule,
+    lastExecution: job.lastExecution,
+    lastStatus: job.lastStatus,
+    errorCount: job.errorCount,
+    isHealthy: job.errorCount < 3
+  }));
+}
+
+// ============================================
+// src/services/logger.service.ts
+// ============================================
+import winston from 'winston';
+import type { LogMeta } from '../types/cron.types';
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(
+    winston.format.timestamp(),
+    winston.format.json()
+  ),
+  transports: [
+    new winston.transports.File({ filename: 'logs/error.log', level: 'error' }),
+    new winston.transports.File({ filename: 'logs/combined.log' }),
+    new winston.transports.Console({
+      format: winston.format.simple()
+    })
+  ]
+});
+
+interface NotificationPayload {
+  text: string;
+  attachments?: Array<{
+    color: string;
+    text?: string;
+  }>;
+}
+
+export class Logger {
+  static info(message: string, meta?: LogMeta): void {
+    logger.info(message, meta);
   }
-);
 
-export class ApiError extends Error {
-  constructor(
+  static error(message: string, error: Error, meta?: LogMeta): void {
+    logger.error(message, { 
+      error: error.message, 
+      stack: error.stack,
+      ...meta 
+    });
+    
+    // Notification asynchrone sans bloquer
+    void this.sendNotification('error', message, error);
+  }
+
+  static alert(message: string): void {
+    logger.error(`🚨 ALERT: ${message}`);
+    void this.sendNotification('alert', message);
+  }
+
+  static async sendNotification(
+    type: string,
     message: string,
-    public statusCode: number,
-    public code?: string,
-    public route?: string,
-  ) {
-    super(message);
-    this.name = "ApiError";
+    error?: Error
+  ): Promise<void> {
+    try {
+      const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+      
+      if (webhookUrl) {
+        const payload: NotificationPayload = {
+          text: `[${type.toUpperCase()}] ${message}`,
+          attachments: error ? [{
+            color: 'danger',
+            text: error.stack
+          }] : []
+        };
+
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
+    } catch (err) {
+      // Ne pas crasher si la notification échoue
+      logger.error('Échec envoi notification', err as Error);
+    }
   }
 }
-const activeProcesses = new Map<string, ProcessInfo>();
-const PROCESS_TIMEOUT = 300000; // 5 minutes
 
-export function singleProcessMiddleware(
-  req: Request, 
-  res: Response, 
-  next: NextFunction
-): void {
-  const requestId = req.headers['x-request-id'] as string | undefined;
+// ============================================
+// src/services/tasks.service.ts
+// ============================================
+import { Cron } from '../decorators/cron.decorator';
+import { Logger } from './logger.service';
 
-  if (!requestId) {
-    Logger.warn('[SingleProcess] - Missing X-Request-ID header');
-    res.status(400).json({ 
-      message: 'Missing X-Request-ID header',
-      code: 'MISSING_REQUEST_ID'
+export class TasksService {
+  @Cron('0 0 * * *') // Tous les jours à minuit
+  async handleDailyTask(): Promise<void> {
+    Logger.info('🌙 Début tâche quotidienne');
+    await this.processDailyReport();
+    Logger.info('🌙 Tâche quotidienne terminée avec succès');
+  }
+
+  @Cron('0 9 * * *') // Tous les jours à 9h
+  async handleMorningTask(): Promise<void> {
+    Logger.info('☀️ Tâche matinale');
+    await this.sendMorningEmails();
+  }
+
+  @Cron('*/30 * * * *') // Toutes les 30 minutes
+  async handleHealthCheck(): Promise<void> {
+    const dbConnected = await this.checkDatabase();
+    const apiResponding = await this.checkExternalAPI();
+    
+    if (!dbConnected || !apiResponding) {
+      Logger.alert('Problème de santé système détecté');
+    }
+  }
+
+  private async processDailyReport(): Promise<void> {
+    // Votre logique métier ici
+    await new Promise<void>(resolve => setTimeout(resolve, 1000));
+  }
+
+  private async sendMorningEmails(): Promise<void> {
+    // Votre logique d'envoi d'emails
+    await new Promise<void>(resolve => setTimeout(resolve, 500));
+  }
+
+  private async checkDatabase(): Promise<boolean> {
+    // Vérifier la connexion à la base de données
+    return true;
+  }
+
+  private async checkExternalAPI(): Promise<boolean> {
+    // Vérifier les APIs externes
+    return true;
+  }
+}
+
+// ============================================
+// src/middlewares/auth.middleware.ts
+// ============================================
+import { Request, Response, NextFunction } from 'express';
+import { Logger } from '../services/logger.service';
+
+export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const apiKey = process.env.CRON_API_KEY;
+  
+  // Si pas de clé API configurée, on autorise (mode dev)
+  if (!apiKey) {
+    Logger.info('⚠️ Mode dev: pas d\'authentification requise pour les crons');
+    return next();
+  }
+  
+  // Vérifier le header Authorization
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.replace('Bearer ', '');
+  
+  if (!token || token !== apiKey) {
+    Logger.error('❌ Tentative d\'accès non autorisé aux crons', new Error('Unauthorized'), {
+      ip: req.ip,
+      path: req.path,
+      userAgent: req.headers['user-agent']
+    });
+    
+    res.status(401).json({
+      success: false,
+      error: 'Unauthorized',
+      message: 'Valid API key required. Use header: Authorization: Bearer <your-api-key>'
     });
     return;
   }
-
-  Logger.debug(`[SingleProcess] - Request received: ${requestId}`);
-
-  const existing = activeProcesses.get(requestId);
-
-  if (existing) {
-    const elapsed = Date.now() - existing.startTime;
-
-    if (elapsed > PROCESS_TIMEOUT) {
-      Logger.warn(`[SingleProcess] - Process ${requestId} timeout, cleaning and restarting`);
-      activeProcesses.delete(requestId);
-    } else {
-      Logger.info(`[SingleProcess] - Process ${requestId} already running (${elapsed}ms), queuing response`);
-      existing.pendingResponses.push(res);
-      return; // N'appelle PAS next()
-    }
-  }
-
-  // Nouveau processus
-  Logger.info(`[SingleProcess] - Starting new process: ${requestId}`);
   
-  activeProcesses.set(requestId, {
-    startTime: Date.now(),
-    pendingResponses: [res]
-  });
-
-  // Intercepte quand la réponse est envoyée
-  const originalSend = res.send.bind(res);
-  const originalJson = res.json.bind(res);
-
-  const handleResponse = (data: unknown, sendFn: (data: unknown) => Response): Response => {
-    const processInfo = activeProcesses.get(requestId);
-    
-    if (!processInfo) {
-      Logger.warn(`[SingleProcess] - Process ${requestId} not found in cache`);
-      return sendFn(data);
-    }
-
-    const statusCode = res.statusCode;
-    Logger.info(`[SingleProcess] - Process ${requestId} completed with status ${statusCode}`);
-
-    // Envoie la réponse à TOUTES les requêtes en attente
-    processInfo.pendingResponses.forEach((pendingRes, index) => {
-      if (pendingRes === res) {
-        Logger.debug(`[SingleProcess] - Sending response to original request`);
-      } else {
-        Logger.debug(`[SingleProcess] - Sending response to waiting request #${index + 1}`);
-        
-        // Copie le status code et headers
-        pendingRes.status(statusCode);
-        Object.entries(res.getHeaders()).forEach(([key, value]) => {
-          if (value !== undefined) {
-            pendingRes.setHeader(key, value as string | number | readonly string[]);
-          }
-        });
-        
-        pendingRes.send(data);
-      }
-    });
-
-    // Nettoie immédiatement
-    activeProcesses.delete(requestId);
-    Logger.debug(`[SingleProcess] - Process ${requestId} cleaned from cache`);
-
-    return sendFn(data);
-  };
-
-  res.send = function(data: unknown): Response {
-    return handleResponse(data, originalSend);
-  };
-
-  res.json = function(data: unknown): Response {
-    return handleResponse(data, originalJson);
-  };
-
+  Logger.info(`✅ Accès autorisé aux crons depuis ${req.ip}`);
   next();
 }
 
-export function startProcessCleanup(): void {
-  setInterval(() => {
-    const now = Date.now();
-    let cleaned = 0;
+// ============================================
+// src/app.ts - Ajout du middleware
+// ============================================
+import express, { Request, Response } from 'express';
+import { TasksService } from './services/tasks.service';
+import { initializeCrons, getCronStatus } from './decorators/cron.decorator';
+import { Logger } from './services/logger.service';
+import { authMiddleware } from './middlewares/auth.middleware';
 
-    for (const [requestId, info] of activeProcesses.entries()) {
-      const elapsed = now - info.startTime;
-      if (elapsed > PROCESS_TIMEOUT) {
-        Logger.warn(`[SingleProcess] - Timeout cleanup for ${requestId}`);
-        
-        // Envoie timeout à toutes les requêtes en attente
-        info.pendingResponses.forEach(res => {
-          if (!res.headersSent) {
-            res.status(504).json({
-              message: 'Process timeout',
-              code: 'PROCESS_TIMEOUT'
-            });
-          }
+const app = express();
+app.use(express.json());
+
+// Initialiser les services et cron jobs
+const tasksService = new TasksService();
+initializeCrons([tasksService]);
+
+// Health check - utilisé par PM2 et load balancers (pas d'auth)
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ 
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Status détaillé des cron jobs (pas d'auth pour monitoring)
+app.get('/cron/status', (_req: Request, res: Response) => {
+  const status = getCronStatus();
+  const allHealthy = status.every(job => job.isHealthy);
+  
+  res.status(allHealthy ? 200 : 503).json({
+    healthy: allHealthy,
+    jobs: status
+  });
+});
+
+// ============================================
+// Routes pour déclencher manuellement les cron jobs (avec auth optionnelle)
+// ============================================
+
+// Déclencher un cron spécifique
+app.post('/cron/trigger/:taskName', authMiddleware, async (req: Request, res: Response) => {
+  const { taskName } = req.params;
+  const startTime = Date.now();
+  
+  try {
+    Logger.info(`🎯 Déclenchement manuel via HTTP: ${taskName}`);
+    
+    switch(taskName) {
+      case 'daily':
+        await tasksService.handleDailyTask();
+        break;
+      case 'morning':
+        await tasksService.handleMorningTask();
+        break;
+      case 'health':
+        await tasksService.handleHealthCheck();
+        break;
+      default:
+        return res.status(404).json({ 
+          success: false,
+          error: 'Task not found',
+          availableTasks: ['daily', 'morning', 'health']
         });
-        
-        activeProcesses.delete(requestId);
-        cleaned++;
-      }
     }
-
-    if (cleaned > 0) {
-      Logger.info(`[SingleProcess] - Cleanup: ${cleaned} timeout process(es)`);
-    }
-  }, 60000);
-}
-
-export function getProcessStats(): {
-  total: number;
-  processes: Array<{
-    requestId: string;
-    elapsed: number;
-    waitingRequests: number;
-  }>;
-} {
-  const stats = {
-    total: activeProcesses.size,
-    processes: [] as Array<{
-      requestId: string;
-      elapsed: number;
-      waitingRequests: number;
-    }>
-  };
-
-  for (const [requestId, info] of activeProcesses.entries()) {
-    stats.processes.push({
-      requestId,
-      elapsed: Date.now() - info.startTime,
-      waitingRequests: info.pendingResponses.length
+    
+    const duration = Date.now() - startTime;
+    Logger.info(`✅ Tâche ${taskName} exécutée avec succès (${duration}ms)`);
+    
+    res.json({ 
+      success: true,
+      message: `Task ${taskName} executed successfully`,
+      duration: `${duration}ms`
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    Logger.error(`❌ Échec tâche ${taskName}`, error as Error, { duration });
+    
+    res.status(500).json({ 
+      success: false,
+      error: 'Task execution failed',
+      message: error instanceof Error ? error.message : String(error),
+      duration: `${duration}ms`
     });
   }
+});
 
-  return stats;
+// Déclencher TOUS les cron jobs
+app.post('/cron/trigger-all', authMiddleware, async (_req: Request, res: Response) => {
+  const startTime = Date.now();
+  const results: Array<{ task: string; success: boolean; error?: string }> = [];
+  
+  Logger.info('🎯 Déclenchement manuel de TOUS les crons via HTTP');
+  
+  const tasks = [
+    { name: 'daily', fn: () => tasksService.handleDailyTask() },
+    { name: 'morning', fn: () => tasksService.handleMorningTask() },
+    { name: 'health', fn: () => tasksService.handleHealthCheck() }
+  ];
+  
+  for (const task of tasks) {
+    try {
+      await task.fn();
+      results.push({ task: task.name, success: true });
+      Logger.info(`✅ ${task.name} exécuté avec succès`);
+    } catch (error) {
+      results.push({ 
+        task: task.name, 
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      Logger.error(`❌ ${task.name} a échoué`, error as Error);
+    }
+  }
+  
+  const duration = Date.now() - startTime;
+  const successCount = results.filter(r => r.success).length;
+  const allSuccess = successCount === tasks.length;
+  
+  res.status(allSuccess ? 200 : 207).json({
+    success: allSuccess,
+    message: `Executed ${successCount}/${tasks.length} tasks successfully`,
+    duration: `${duration}ms`,
+    results
+  });
+});
+
+// ============================================
+// Gestion des erreurs globales pour PM2
+// ============================================
+
+// Capturer les exceptions non gérées
+process.on('uncaughtException', (error: Error) => {
+  Logger.error('🔥 Exception non capturée', error);
+  // Log l'erreur mais laisse PM2 gérer le restart
+  // Ne pas appeler process.exit() - PM2 s'en charge
+});
+
+// Capturer les promesses rejetées non gérées
+process.on('unhandledRejection', (reason: unknown) => {
+  Logger.error(
+    '🔥 Promesse rejetée non gérée',
+    reason instanceof Error ? reason : new Error(String(reason))
+  );
+  // Log l'erreur mais laisse PM2 gérer le restart
+});
+
+// Graceful shutdown sur SIGTERM (envoyé par PM2)
+process.on('SIGTERM', () => {
+  Logger.info('👋 SIGTERM reçu - Arrêt gracieux...');
+  
+  // Donner du temps pour finir les requêtes en cours
+  setTimeout(() => {
+    Logger.info('✅ Arrêt propre terminé');
+    process.exit(0);
+  }, 5000); // 5 secondes pour finir les opérations
+});
+
+// Graceful shutdown sur SIGINT (Ctrl+C en dev)
+process.on('SIGINT', () => {
+  Logger.info('👋 SIGINT reçu - Arrêt...');
+  process.exit(0);
+});
+
+// Démarrage du serveur
+const PORT = process.env.PORT || 3000;
+const server = app.listen(PORT, () => {
+  Logger.info(`🚀 Serveur démarré sur le port ${PORT}`);
+  Logger.info(`📊 Health check: http://localhost:${PORT}/health`);
+  Logger.info(`⏰ Cron status: http://localhost:${PORT}/cron/status`);
+});
+
+// Exporter pour Vite et tests
+export { app, server };
+
+// ============================================
+// package.json
+// ============================================
+/*
+{
+  "name": "express-cron-app",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "start": "node dist/app.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-cron": "^3.0.3",
+    "winston": "^3.11.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.8",
+    "vite-plugin-node": "^3.0.2"
+  }
 }
-```
+*/
 
----
+// ============================================
+// .env.example
+// ============================================
+/*
+NODE_ENV=production
+PORT=3000
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 
-## 🎯 Comment ça fonctionne maintenant
+# Optionnel : Clé API pour protéger les routes /cron/trigger
+# Si non défini, les routes sont accessibles sans authentification (mode dev)
+CRON_API_KEY=your-secret-api-key-here
+*/
 
-### **Principe ultra-simple :**
+// ============================================
+// Commandes de développement
+// ============================================
+/*
+# Développement avec Vite (hot reload)
+npm run dev
 
-1. **Première requête (Request ID: abc123)** arrive
-   - Ajoute `res` dans une liste d'attente
-   - Continue vers le controller (`next()`)
+# Build pour production
+npm run build
 
-2. **Deuxième requête (même ID: abc123)** arrive pendant le traitement
-   - Ajoute simplement ce `res` dans la liste d'attente
-   - **N'appelle PAS `next()`** → Pas de nouveau traitement
-
-3. **Le controller termine** et fait `res.send(fichier)` ou `res.json(data)`
-   - Le middleware intercepte
-   - **Envoie la même réponse à TOUTES les requêtes en attente**
-   - Nettoie immédiatement
-
----
-
-## ✅ Avantages
-
-✅ **Pas de stockage** de la réponse en mémoire  
-✅ **Gère automatiquement** JSON, Buffer, fichiers, tout  
-✅ **Les erreurs 400/500** sont envoyées à toutes les requêtes  
-✅ **Headers copiés** automatiquement  
-✅ **Ultra simple** et léger  
-
----
-
-## 📊 Exemple concret
-```
-T=0s:   Request #1 (ID: abc123) → Traitement démarre
-        activeProcesses.set("abc123", { pendingResponses: [res1] })
-
-T=25s:  Request #2 (ID: abc123) → Gateway va timeout
-        activeProcesses.get("abc123").pendingResponses.push(res2)
-        → N'exécute PAS le traitement
-
-T=30s:  Gateway timeout pour Request #1 et #2 (côté gateway)
-
-T=33s:  Request #3 (ID: abc123) → Retry frontend
-        activeProcesses.get("abc123").pendingResponses.push(res3)
-
-T=60s:  Controller termine: res.send(zipBuffer)
-        → Middleware intercepte
-        → Envoie zipBuffer à res1, res2, res3
-        → activeProcesses.delete("abc123")
-
-✅ Les 3 requêtes reçoivent le fichier
-✅ Un seul traitement exécuté
+# L'équipe DevOps lancera avec PM2 :
+# pm2 start dist/app.js --name express-cron-app
+*/
