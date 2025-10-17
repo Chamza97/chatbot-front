@@ -993,51 +993,50 @@ app.post('/cron/trigger-all', authMiddleware, async (_req: Request, res: Respons
 });
 
 // ============================================
-// Gestion des erreurs globales pour PM2
+// Global error handling for PM2
 // ============================================
 
-// Capturer les exceptions non gérées
+// Capture uncaught exceptions
 process.on('uncaughtException', (error: Error) => {
-  Logger.error('🔥 Exception non capturée', error);
-  // Log l'erreur mais laisse PM2 gérer le restart
-  // Ne pas appeler process.exit() - PM2 s'en charge
+  Logger.error('Uncaught Exception', error);
+  // Log error but let PM2 handle restart
 });
 
-// Capturer les promesses rejetées non gérées
+// Capture unhandled promise rejections
 process.on('unhandledRejection', (reason: unknown) => {
   Logger.error(
-    '🔥 Promesse rejetée non gérée',
+    'Unhandled Promise Rejection',
     reason instanceof Error ? reason : new Error(String(reason))
   );
-  // Log l'erreur mais laisse PM2 gérer le restart
+  // Log error but let PM2 handle restart
 });
 
-// Graceful shutdown sur SIGTERM (envoyé par PM2)
+// Graceful shutdown on SIGTERM (sent by PM2)
 process.on('SIGTERM', () => {
-  Logger.info('👋 SIGTERM reçu - Arrêt gracieux...');
+  Logger.info('SIGTERM received - Graceful shutdown...');
   
-  // Donner du temps pour finir les requêtes en cours
+  // Give time to finish ongoing requests
   setTimeout(() => {
-    Logger.info('✅ Arrêt propre terminé');
+    Logger.info('Clean shutdown completed');
     process.exit(0);
-  }, 5000); // 5 secondes pour finir les opérations
+  }, 5000); // 5 seconds to finish operations
 });
 
-// Graceful shutdown sur SIGINT (Ctrl+C en dev)
+// Graceful shutdown on SIGINT (Ctrl+C in dev)
 process.on('SIGINT', () => {
-  Logger.info('👋 SIGINT reçu - Arrêt...');
+  Logger.info('SIGINT received - Shutting down...');
   process.exit(0);
 });
 
-// Démarrage du serveur
+// Start server
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
-  Logger.info(`🚀 Serveur démarré sur le port ${PORT}`);
-  Logger.info(`📊 Health check: http://localhost:${PORT}/health`);
-  Logger.info(`⏰ Cron status: http://localhost:${PORT}/cron/status`);
+  Logger.info(`Server started on port ${PORT}`);
+  Logger.info(`Health check: http://localhost:${PORT}/health`);
+  Logger.info(`Cron status: http://localhost:${PORT}/cron/status`);
 });
 
-// Exporter pour Vite et tests
+// Export for Vite and tests
 export { app, server };
 
 // ============================================
