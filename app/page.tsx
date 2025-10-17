@@ -47,7 +47,8 @@ export default defineConfig({
     "emitDecoratorMetadata": true,
     "resolveJsonModule": true,
     "outDir": "dist",
-    "rootDir": "src"
+    "rootDir": "src",
+    "strictPropertyInitialization": false
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
@@ -93,7 +94,7 @@ const cronJobs: CronMetadata[] = [];
 
 export function Cron(schedule: string) {
   return function (
-    target: unknown,
+    target: object,
     propertyKey: string,
     descriptor: PropertyDescriptor
   ): void {
