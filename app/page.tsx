@@ -1,4 +1,4 @@
-import { Box, Typography, IconButton, Checkbox } from "@mui/material";
+import { Box, TextField, IconButton, Checkbox } from "@mui/material";
 import {
   Upload,
   Edit,
@@ -55,42 +55,36 @@ const ReferentialCard = ({
         <Checkbox checked={isSelected} onChange={onSelect} />
       </Box>
 
-      {/* Name */}
-      <Box sx={{ mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{ color: "text.secondary", display: "block", mb: 0.5 }}
-        >
-          Name
-        </Typography>
-        <Typography variant="body1" sx={{ fontWeight: 500 }}>
-          {name}
-        </Typography>
-      </Box>
+      {/* Name TextField */}
+      <TextField
+        label="Name"
+        value={name}
+        variant="standard"
+        disabled
+        fullWidth
+        sx={{ mb: 2 }}
+      />
 
-      {/* Flag */}
-      <Box sx={{ mb: 2 }}>
-        <Typography
-          variant="caption"
-          sx={{ color: "text.secondary", display: "block", mb: 0.5 }}
-        >
-          Flag
-        </Typography>
-        <Typography variant="body1" sx={{ fontWeight: 500 }}>
-          {flag}
-        </Typography>
-      </Box>
+      {/* Flag TextField */}
+      <TextField
+        label="Flag"
+        value={flag}
+        variant="standard"
+        disabled
+        fullWidth
+        sx={{ mb: 2 }}
+      />
 
-      {/* Description */}
-      <Box sx={{ mb: 3 }}>
-        <Typography
-          variant="caption"
-          sx={{ color: "text.secondary", display: "block", mb: 0.5 }}
-        >
-          Description
-        </Typography>
-        <Typography variant="body2">{description}</Typography>
-      </Box>
+      {/* Description TextField */}
+      <TextField
+        label="Description"
+        value={description}
+        variant="standard"
+        disabled
+        fullWidth
+        multiline
+        sx={{ mb: 3 }}
+      />
 
       {/* Action Buttons */}
       <Box
