@@ -1,122 +1,214 @@
-import { Box, TextField, IconButton, Checkbox } from "@mui/material";
 import {
-  Upload,
-  Edit,
-  Visibility,
-  Download,
-  ContentCopy,
-  Delete,
-} from "@mui/icons-material";
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  Box,
+  Typography,
+} from "@mui/material";
+import { CloudUpload } from "@mui/icons-material";
+import { useState } from "react";
 
-interface ReferentialCardProps {
-  name: string;
-  flag: string;
-  description: string;
-  isSelected?: boolean;
-  onSelect?: () => void;
-  onUpload?: () => void;
-  onEdit?: () => void;
-  onView?: () => void;
-  onDownload?: () => void;
-  onCopy?: () => void;
-  onDelete?: () => void;
+interface ImportModalProps {
+  open: boolean;
+  onClose: () => void;
+  onImport: (file: File, format: string) => void;
 }
 
-const ReferentialCard = ({
-  name,
-  flag,
-  description,
-  isSelected = false,
-  onSelect,
-  onUpload,
-  onEdit,
-  onView,
-  onDownload,
-  onCopy,
-  onDelete,
-}: ReferentialCardProps) => {
+const ImportModal = ({ open, onClose, onImport }: ImportModalProps) => {
+  const [fileFormat, setFileFormat] = useState("json");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.files && event.target.files[0]) {
+      setSelectedFile(event.target.files[0]);
+    }
+  };
+
+  const handleImport = () => {
+    if (selectedFile) {
+      onImport(selectedFile, fileFormat);
+      handleClose();
+    }
+  };
+
+  const handleClose = () => {
+    setSelectedFile(null);
+    setFileFormat("json");
+    onClose();
+  };
+
   return (
-    <Box
-      sx={{
-        width: "100%",
-        maxWidth: 400,
-        bgcolor: "background.paper",
-        borderRadius: 1,
-        boxShadow: 2,
-        p: 2,
-        transition: "all 0.3s ease",
-        "&:hover": {
-          boxShadow: 4,
-        },
+    <Dialog 
+      open={open} 
+      onClose={handleClose} 
+      maxWidth="sm" 
+      fullWidth
+      PaperProps={{
+        sx: {
+          borderRadius: 2,
+        }
       }}
     >
-      {/* Checkbox */}
-      <Box sx={{ mb: 2 }}>
-        <Checkbox checked={isSelected} onChange={onSelect} />
-      </Box>
+      <DialogTitle sx={{ pb: 1 }}>
+        Type de fichier
+      </DialogTitle>
 
-      {/* Name TextField */}
-      <TextField
-        label="Name"
-        value={name}
-        variant="standard"
-        disabled
-        fullWidth
-        sx={{ mb: 2 }}
-      />
+      <DialogContent sx={{ pt: 2 }}>
+        <RadioGroup
+          value={fileFormat}
+          onChange={(e) => setFileFormat(e.target.value)}
+          sx={{ mb: 3 }}
+        >
+          <FormControlLabel
+            value="json"
+            control={<Radio />}
+            label="Format JSON"
+            sx={{ mb: 1 }}
+          />
+          <FormControlLabel
+            value="csv"
+            control={<Radio />}
+            label="Format CSV"
+          />
+        </RadioGroup>
 
-      {/* Flag TextField */}
-      <TextField
-        label="Flag"
-        value={flag}
-        variant="standard"
-        disabled
-        fullWidth
-        sx={{ mb: 2 }}
-      />
+        <Box
+          sx={{
+            border: "2px dashed",
+            borderColor: "grey.400",
+            borderRadius: 1,
+            p: 4,
+            textAlign: "center",
+            position: "relative",
+            bgcolor: "grey.50",
+          }}
+        >
+          <CloudUpload 
+            sx={{ 
+              fontSize: 48, 
+              color: "text.secondary", 
+              mb: 2 
+            }} 
+          />
+          
+          <Typography 
+            variant="body1" 
+            sx={{ mb: 2, color: "text.primary" }}
+          >
+            Importer de nouvelles données
+          </Typography>
 
-      {/* Description TextField */}
-      <TextField
-        label="Description"
-        value={description}
-        variant="standard"
-        disabled
-        fullWidth
-        multiline
-        sx={{ mb: 3 }}
-      />
+          <Box component="input"
+            type="file"
+            id="file-upload"
+            accept={fileFormat === "json" ? ".json" : ".csv"}
+            onChange={handleFileChange}
+            sx={{ display: "none" }}
+          />
 
-      {/* Action Buttons */}
-      <Box
-        sx={{
-          display: "flex",
-          gap: 1,
-          borderTop: "1px solid",
-          borderColor: "divider",
-          pt: 2,
+          <Box component="label" htmlFor="file-upload">
+            <Button
+              variant="contained"
+              component="span"
+              sx={{
+                bgcolor: "#4a148c",
+                color: "white",
+                px: 4,
+                py: 1,
+                textTransform: "uppercase",
+                fontWeight: 600,
+                "&:hover": { 
+                  bgcolor: "#6a1b9a" 
+                },
+              }}
+            >
+              Chemin de fichier
+            </Button>
+          </Box>
+
+          {selectedFile && (
+            <Typography 
+              variant="caption" 
+              sx={{ 
+                display: "block", 
+                mt: 2,
+                color: "text.secondary"
+              }}
+            >
+              {selectedFile.name}
+            </Typography>
+          )}
+
+          <Typography
+            variant="h6"
+            sx={{ 
+              color: "error.main", 
+              position: "absolute", 
+              top: 8, 
+              right: 16,
+              fontWeight: "bold"
+            }}
+          >
+            *
+          </Typography>
+        </Box>
+      </DialogContent>
+
+      <DialogActions 
+        sx={{ 
+          p: 2, 
+          gap: 2,
+          justifyContent: "flex-start"
         }}
       >
-        <IconButton onClick={onUpload} size="small">
-          <Upload />
-        </IconButton>
-        <IconButton onClick={onEdit} size="small">
-          <Edit />
-        </IconButton>
-        <IconButton onClick={onView} size="small">
-          <Visibility />
-        </IconButton>
-        <IconButton onClick={onDownload} size="small">
-          <Download />
-        </IconButton>
-        <IconButton onClick={onCopy} size="small">
-          <ContentCopy />
-        </IconButton>
-        <IconButton onClick={onDelete} size="small" color="error">
-          <Delete />
-        </IconButton>
-      </Box>
-    </Box>
+        <Button
+          onClick={handleClose}
+          variant="contained"
+          sx={{
+            bgcolor: "#4a148c",
+            color: "white",
+            px: 4,
+            py: 1,
+            textTransform: "uppercase",
+            fontWeight: 600,
+            "&:hover": { 
+              bgcolor: "#6a1b9a" 
+            },
+          }}
+        >
+          Annuler
+        </Button>
+        
+        <Button
+          onClick={handleImport}
+          disabled={!selectedFile}
+          variant="contained"
+          sx={{
+            bgcolor: selectedFile ? "#e0e0e0" : "#f5f5f5",
+            color: "text.primary",
+            px: 4,
+            py: 1,
+            textTransform: "uppercase",
+            fontWeight: 600,
+            "&:hover": { 
+              bgcolor: selectedFile ? "#d5d5d5" : "#f5f5f5" 
+            },
+            "&.Mui-disabled": {
+              bgcolor: "#f5f5f5",
+              color: "text.disabled"
+            }
+          }}
+        >
+          Importer
+        </Button>
+      </DialogActions>
+    </Dialog>
   );
 };
 
-export default ReferentialCard;
+export default ImportModal;
