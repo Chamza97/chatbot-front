@@ -1,5 +1,5 @@
 // EventContext.tsx
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
 
 export type EventData<T = unknown> = {
   type: string;
@@ -15,15 +15,15 @@ type EventContextType = {
 
 const EventContext = createContext<EventContextType | null>(null);
 
-export function EventProvider({ children }: { children: ReactNode }) {
+export function EventProvider({ children }: { children: ReactNode }): JSX.Element {
   const [listeners, setListeners] = useState<Map<string, Set<EventCallback>>>(new Map());
 
-  const emitEvent = <T,>({ type, payload }: EventData<T>): void => {
+  const emitEvent = useCallback(<T,>({ type, payload }: EventData<T>): void => {
     const callbacks = listeners.get(type);
     callbacks?.forEach((callback: EventCallback) => callback(payload));
-  };
+  }, [listeners]);
 
-  const subscribeToEvent = <T,>(type: string, callback: EventCallback<T>): (() => void) => {
+  const subscribeToEvent = useCallback(<T,>(type: string, callback: EventCallback<T>): (() => void) => {
     setListeners((prev: Map<string, Set<EventCallback>>) => {
       const newListeners = new Map(prev);
       if (!newListeners.has(type)) {
@@ -40,22 +40,27 @@ export function EventProvider({ children }: { children: ReactNode }) {
         return newListeners;
       });
     };
+  }, []);
+
+  const value: EventContextType = {
+    emitEvent,
+    subscribeToEvent
   };
 
   return (
-    <EventContext.Provider value={{ emitEvent, subscribeToEvent }}>
+    <EventContext.Provider value={value}>
       {children}
     </EventContext.Provider>
   );
 }
 
-export const useEventBus = (): EventContextType => {
+export function useEventBus(): EventContextType {
   const context = useContext(EventContext);
   if (!context) {
     throw new Error('useEventBus doit être utilisé dans EventProvider');
   }
   return context;
-};
+}
 
 
     // types/events.ts
