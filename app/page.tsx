@@ -1,63 +1,76 @@
-// EventContext.tsx
-import { createContext, useContext, useState, ReactNode, useCallback } from 'react';
+import { 
+  createContext, 
+  useContext, 
+  useState, 
+  ReactNode, 
+  useMemo 
+} from 'react';
 
-export type EventData<T = unknown> = {
+export interface EventData<T = unknown> {
   type: string;
   payload: T;
-};
+}
 
 type EventCallback<T = unknown> = (payload: T) => void;
 
-type EventContextType = {
+interface EventContextValue {
   emitEvent: <T = unknown>(event: EventData<T>) => void;
-  subscribeToEvent: <T = unknown>(type: string, callback: EventCallback<T>) => () => void;
-};
+  subscribeToEvent: <T = unknown>(
+    type: string, 
+    callback: EventCallback<T>
+  ) => () => void;
+}
 
-const EventContext = createContext<EventContextType | null>(null);
+const EventContext = createContext<EventContextValue | undefined>(undefined);
 
 export function EventProvider({ children }: { children: ReactNode }): JSX.Element {
-  const [listeners, setListeners] = useState<Map<string, Set<EventCallback>>>(new Map());
+  const [listeners] = useState<Map<string, Set<EventCallback>>>(
+    () => new Map()
+  );
 
-  const emitEvent = useCallback(<T,>({ type, payload }: EventData<T>): void => {
-    const callbacks = listeners.get(type);
-    callbacks?.forEach((callback: EventCallback) => callback(payload));
+  const contextValue = useMemo<EventContextValue>(() => {
+    const emitEvent = <T,>(event: EventData<T>): void => {
+      const callbacks = listeners.get(event.type);
+      if (callbacks) {
+        callbacks.forEach((callback: EventCallback) => {
+          callback(event.payload);
+        });
+      }
+    };
+
+    const subscribeToEvent = <T,>(
+      type: string, 
+      callback: EventCallback<T>
+    ): (() => void) => {
+      if (!listeners.has(type)) {
+        listeners.set(type, new Set());
+      }
+      
+      const typeListeners = listeners.get(type);
+      typeListeners?.add(callback as EventCallback);
+
+      return (): void => {
+        typeListeners?.delete(callback as EventCallback);
+      };
+    };
+
+    return {
+      emitEvent,
+      subscribeToEvent
+    };
   }, [listeners]);
 
-  const subscribeToEvent = useCallback(<T,>(type: string, callback: EventCallback<T>): (() => void) => {
-    setListeners((prev: Map<string, Set<EventCallback>>) => {
-      const newListeners = new Map(prev);
-      if (!newListeners.has(type)) {
-        newListeners.set(type, new Set());
-      }
-      newListeners.get(type)!.add(callback as EventCallback);
-      return newListeners;
-    });
-
-    return (): void => {
-      setListeners((prev: Map<string, Set<EventCallback>>) => {
-        const newListeners = new Map(prev);
-        newListeners.get(type)?.delete(callback as EventCallback);
-        return newListeners;
-      });
-    };
-  }, []);
-
-  const value: EventContextType = {
-    emitEvent,
-    subscribeToEvent
-  };
-
   return (
-    <EventContext.Provider value={value}>
+    <EventContext.Provider value={contextValue}>
       {children}
     </EventContext.Provider>
   );
 }
 
-export function useEventBus(): EventContextType {
+export function useEventBus(): EventContextValue {
   const context = useContext(EventContext);
-  if (!context) {
-    throw new Error('useEventBus doit être utilisé dans EventProvider');
+  if (context === undefined) {
+    throw new Error('useEventBus doit être utilisé dans un EventProvider');
   }
   return context;
 }
