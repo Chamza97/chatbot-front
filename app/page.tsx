@@ -1,67 +1,97 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import axios from "axios";
-import { useSnackbar } from "notistack";
+// EventContext.tsx
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-const MyPage = () => {
-  const queryClient = useQueryClient();
-  const { enqueueSnackbar } = useSnackbar();
-  const [openImportModal, setOpenImportModal] = useState(false);
+export type EventData<T = unknown> = {
+  type: string;
+  payload: T;
+};
 
-  // Mutation pour l'import
-  const importMutation = useMutation({
-    mutationFn: async ({ file, format }: { file: File; format: string }) => {
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("format", format);
+type EventCallback<T = unknown> = (payload: T) => void;
 
-      const response = await axios.post("/api/import", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
+type EventContextType = {
+  emitEvent: <T = unknown>(event: EventData<T>) => void;
+  subscribeToEvent: <T = unknown>(type: string, callback: EventCallback<T>) => () => void;
+};
+
+const EventContext = createContext<EventContextType | null>(null);
+
+export function EventProvider({ children }: { children: ReactNode }) {
+  const [listeners, setListeners] = useState<Map<string, Set<EventCallback>>>(new Map());
+
+  const emitEvent = <T,>({ type, payload }: EventData<T>): void => {
+    const callbacks = listeners.get(type);
+    callbacks?.forEach((callback: EventCallback) => callback(payload));
+  };
+
+  const subscribeToEvent = <T,>(type: string, callback: EventCallback<T>): (() => void) => {
+    setListeners((prev: Map<string, Set<EventCallback>>) => {
+      const newListeners = new Map(prev);
+      if (!newListeners.has(type)) {
+        newListeners.set(type, new Set());
+      }
+      newListeners.get(type)!.add(callback as EventCallback);
+      return newListeners;
+    });
+
+    return (): void => {
+      setListeners((prev: Map<string, Set<EventCallback>>) => {
+        const newListeners = new Map(prev);
+        newListeners.get(type)?.delete(callback as EventCallback);
+        return newListeners;
       });
-
-      return response.data;
-    },
-    onSuccess: (data) => {
-      enqueueSnackbar("Import réussi!", { variant: "success" });
-      // Invalider les queries pour rafraîchir les données
-      queryClient.invalidateQueries({ queryKey: ["dynamic-models"] });
-      setOpenImportModal(false);
-    },
-    onError: (error: any) => {
-      enqueueSnackbar(
-        `Erreur lors de l'import: ${error.message}`,
-        { variant: "error" }
-      );
-    },
-  });
-
-  const handleImport = (file: File, format: string) => {
-    importMutation.mutate({ file, format });
+    };
   };
 
   return (
-    <Box sx={{ p: 4 }}>
-      <Button
-        variant="contained"
-        onClick={() => setOpenImportModal(true)}
-      >
-        Importer des données
-      </Button>
-
-      <ImportModal
-        open={openImportModal}
-        onClose={() => setOpenImportModal(false)}
-        onImport={handleImport}
-      />
-
-      {/* Afficher un loader pendant l'import */}
-      {importMutation.isPending && (
-        <Box sx={{ mt: 2 }}>
-          <CircularProgress size={24} />
-          <Typography sx={{ ml: 2 }}>Import en cours...</Typography>
-        </Box>
-      )}
-    </Box>
+    <EventContext.Provider value={{ emitEvent, subscribeToEvent }}>
+      {children}
+    </EventContext.Provider>
   );
+}
+
+export const useEventBus = (): EventContextType => {
+  const context = useContext(EventContext);
+  if (!context) {
+    throw new Error('useEventBus doit être utilisé dans EventProvider');
+  }
+  return context;
 };
+
+
+    // types/events.ts
+export interface UserClickedPayload {
+  id: number;
+  name: string;
+}
+
+export interface DataUpdatedPayload {
+  data: string[];
+  timestamp: number;
+}
+
+export const EventTypes = {
+  USER_CLICKED: 'USER_CLICKED',
+  DATA_UPDATED: 'DATA_UPDATED',
+} as const;
+
+
+    // ComposantA.tsx
+import { useEventBus } from './EventContext';
+import { EventTypes, UserClickedPayload } from './types/events';
+
+export function ComposantA(): JSX.Element {
+  const { emitEvent } = useEventBus();
+  
+  const handleClick = (): void => {
+    emitEvent<UserClickedPayload>({ 
+      type: EventTypes.USER_CLICKED, 
+      payload: { id: 123, name: 'John' } 
+    });
+  };
+  
+  return (
+    <button onClick={handleClick}>
+      Envoyer Event
+    </button>
+  );
+}
