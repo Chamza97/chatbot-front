@@ -1,9 +1,5 @@
-import {
-  GridToolbarColumnsButton,
-  GridToolbarFilterButton,
-  GridToolbarDensitySelector,
-  GridToolbarExport,
-} from '@mui/x-data-grid';
+import { DataGrid, GridColDef, Toolbar, ToolbarButton } from '@mui/x-data-grid';
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 
 function CustomToolbar() {
   const handlePurge = () => {
@@ -11,28 +7,26 @@ function CustomToolbar() {
   };
 
   return (
-    <Box sx={{ 
-      p: 1, 
-      display: 'flex', 
-      gap: 1, 
-      alignItems: 'center',
-      borderBottom: 1, 
-      borderColor: 'divider' 
-    }}>
-      <GridToolbarColumnsButton />
-      <GridToolbarFilterButton />
-      <GridToolbarDensitySelector />
-      <GridToolbarExport />
-      <Box sx={{ flexGrow: 1 }} />
-      <Button
-        size="small"
-        startIcon={<DeleteSweepIcon />}
+    <Toolbar>
+      <ToolbarButton 
         onClick={handlePurge}
-        variant="outlined"
-        color="error"
+        startIcon={<DeleteSweepIcon />}
       >
         Purge
-      </Button>
-    </Box>
+      </ToolbarButton>
+    </Toolbar>
+  );
+}
+
+function MyDataGrid() {
+  return (
+    <DataGrid
+      rows={rows}
+      columns={columns}
+      showToolbar
+      slots={{
+        toolbar: CustomToolbar,
+      }}
+    />
   );
 }
