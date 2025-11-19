@@ -1,7 +1,3 @@
-import { Queue, Worker, Job } from 'bullmq';
-import { redisConnection } from '../config/redis';
-import jobRepository from '../repositories/jobRepository';
-
 interface MyTaskData {
   taskName: string;
   params: Record<string, unknown>;
@@ -20,10 +16,30 @@ class JobService {
     this.worker = new Worker<MyTaskData>(
       'taskQueue',
       async (job: Job<MyTaskData>) => {
-        await this.executeTask(job.data);
+        // Mettre à jour le statut en "running"
+        await jobRepository.updateJobStatus(job.id as string, 'running');
+        
+        try {
+          await this.executeTask(job.data);
+          // Succès
+          await jobRepository.updateJobStatus(job.id as string, 'completed');
+        } catch (error) {
+          // Erreur
+          await jobRepository.updateJobStatus(job.id as string, 'failed');
+          throw error;
+        }
       },
       { connection: redisConnection }
     );
+
+    // Écouter les événements
+    this.worker.on('completed', (job: Job) => {
+      console.log(`Job ${job.id} completed`);
+    });
+
+    this.worker.on('failed', (job: Job | undefined, err: Error) => {
+      console.error(`Job ${job?.id} failed:`, err);
+    });
   }
 
   // Ta fonction de traitement
@@ -31,15 +47,18 @@ class JobService {
     console.log(`Executing task: ${data.taskName}`, data.params);
     
     // TON CODE ICI
-    // Exemple : traitement long
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => setTimeout(resolve, 1000));
       console.log(`Progress: ${i + 1}/10`);
     }
   }
 
-  // Créer un nouveau job et sauvegarder l'ID en base
-  async createJob(taskName: string, params: Record<string, unknown>): Promise<string> {
+  // Créer, sauvegarder ET exécuter le job immédiatement
+  async createAndExecuteJob(
+    taskName: string, 
+    params: Record<string, unknown>
+  ): Promise<string> {
+    // 1. Créer le job dans BullMQ
     const job = await this.queue.add('task', {
       taskName,
       params,
@@ -47,28 +66,42 @@ class JobService {
 
     const jobId = job.id as string;
     
-    // Sauvegarder en base
+    // 2. Sauvegarder en base de données
     await jobRepository.saveJob({
       jobId,
       taskName,
-      status: 'active',
+      status: 'pending',
       createdAt: new Date(),
     });
 
+    // 3. Le worker va automatiquement le prendre et l'exécuter
+    console.log(`Job ${jobId} created and queued for execution`);
+
     return jobId;
   }
-// Récupérer un job depuis la base et le mettre en pause
+
+  // Mettre en pause
   async pauseJobById(jobId: string): Promise<void> {
     const job = await this.queue.getJob(jobId);
     if (!job) {
       throw new Error('Job not found');
     }
 
-    await job.moveToDelayed(Date.now() + 999999999); // Pause infinie
-    await jobRepository.updateJobStatus(jobId, 'paused');
+    // Vérifier l'état actuel
+    const state = await job.getState();
+    
+    if (state === 'active') {
+      // Si le job est en cours, on ne peut pas vraiment le pauser
+      throw new Error('Cannot pause a running job');
+    }
+
+    if (state === 'waiting' || state === 'delayed') {
+      await job.moveToDelayed(Date.now() + 999999999);
+      await jobRepository.updateJobStatus(jobId, 'paused');
+    }
   }
 
-  // Reprendre un job
+  // Reprendre
   async resumeJobById(jobId: string): Promise<void> {
     const job = await this.queue.getJob(jobId);
     if (!job) {
@@ -76,10 +109,10 @@ class JobService {
     }
 
     await job.promote();
-    await jobRepository.updateJobStatus(jobId, 'active');
+    await jobRepository.updateJobStatus(jobId, 'pending');
   }
 
-  // Supprimer un job
+  // Supprimer
   async deleteJobById(jobId: string): Promise<void> {
     const job = await this.queue.getJob(jobId);
     if (job) {
@@ -90,56 +123,18 @@ class JobService {
   }
 
   // Récupérer l'état d'un job
-  async getJobStatus(jobId: string): Promise<string | null> {
+  async getJobStatus(jobId: string): Promise<{ 
+    bullState: string | null; 
+    dbStatus: string | null;
+  }> {
     const job = await this.queue.getJob(jobId);
-    if (!job) return null;
+    const bullState = job ? await job.getState() : null;
     
-    const state = await job.getState();
-    return state;
+    const dbRecord = await jobRepository.getJobById(jobId);
+    const dbStatus = dbRecord?.status || null;
+    
+    return { bullState, dbStatus };
   }
 }
 
 export default new JobService();
-
-
-class JobRepository {
-  // Sauvegarder le job ID en base
-  async saveJob(job: JobRecord): Promise<void> {
-    // AVEC PRISMA
-    // await prisma.job.create({ data: job });
-    
-    // AVEC MONGOOSE
-    // await JobModel.create(job);
-    
-    // AVEC SQL BRUT
-    // await db.query('INSERT INTO jobs ...', [job.jobId, job.taskName, job.status]);
-    
-    console.log('Job saved in DB:', job);
-  }
-
-  // Mettre à jour le statut
-  async updateJobStatus(jobId: string, status: string): Promise<void> {
-    // await prisma.job.update({ where: { jobId }, data: { status } });
-    console.log(`Job ${jobId} status updated to ${status}`);
-  }
-
-  // Supprimer de la base
-  async deleteJob(jobId: string): Promise<void> {
-    // await prisma.job.delete({ where: { jobId } });
-    console.log(`Job ${jobId} deleted from DB`);
-  }
-
-  // Récupérer un job
-  async getJobById(jobId: string): Promise<JobRecord | null> {
-    // return await prisma.job.findUnique({ where: { jobId } });
-    return null;
-  }
-
-  // Lister tous les jobs
-  async getAllJobs(): Promise<JobRecord[]> {
-    // return await prisma.job.findMany();
-    return [];
-  }
-}
-
-export default new JobRepository();
