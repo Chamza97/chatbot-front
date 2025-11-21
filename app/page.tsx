@@ -1,4 +1,10 @@
- async createAndExecuteJob(taskName: string, params: Record<string, unknown>): Promise<string> {
+ {
+  "scripts": {
+    "build:worker": "esbuild src/modules/jobs-module/worker.manager.ts --bundle --platform=node --format=esm --outfile=src/modules/jobs-module/worker.bundle.mjs",
+    "dev": "npm run build:worker && nodemon --watch src --ext ts --exec \"npm run build:worker && tsx src/app.ts\""
+  }
+}
+async createAndExecuteJob(taskName: string, params: Record<string, unknown>): Promise<string> {
   console.log('🔵 1. Starting job creation...');
   
   const jobRecord: JobRecord = {
