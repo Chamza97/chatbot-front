@@ -1,64 +1,64 @@
-import { Worker } from 'worker_threads';
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-async createAndExecuteJob(taskName: string, params: Record<string, unknown>): Promise<string> {
+ async createAndExecuteJob(taskName: string, params: Record<string, unknown>): Promise<string> {
+  console.log('🔵 1. Starting job creation...');
+  
   const jobRecord: JobRecord = {
     taskName,
     status: 'pending',
     createdAt: new Date(),
   };
   
+  console.log('🔵 2. Job record created');
+  
   const jobData: JobData = { taskName, params };
   
-  // Utilise eval pour charger tsx puis importer le worker TypeScript
+  console.log('🔵 3. Creating worker with eval...');
+  
   const workerPath = path.join(__dirname, 'worker.manager.ts');
+  console.log('🔵 4. Worker path:', workerPath);
   
   const worker = new Worker(
     `
+    console.log('🟢 Worker eval started');
     import 'tsx/esm';
-    import { fileURLToPath } from 'url';
-    import { workerData } from 'worker_threads';
-    
+    console.log('🟢 tsx/esm imported');
     const workerPath = '${workerPath.replace(/\\/g, '\\\\')}';
+    console.log('🟢 About to import:', workerPath);
     await import(workerPath);
+    console.log('🟢 Worker imported successfully');
     `,
     {
       eval: true,
       workerData: jobData,
+      stdout: true, // 👈 Ajoute ça pour voir les console.log du worker
+      stderr: true, // 👈 Et ça aussi
     }
   );
 
+  console.log('🔵 5. Worker object created');
+
   const jobId = 'job_' + Date.now();
 
-  console.log("worker created");
   this.activeJobs.set(jobId, {
     jobId,
     worker,
     status: 'running',
   });
 
-  worker.on('message', async (message: WorkerResponse) => {
-    console.log(`Job ${jobId}: ${message.type}`, message.data);
-    
-    if (message.type === 'completed') {
-      this.activeJobs.delete(jobId);
-    } else if (message.type === 'error') {
-      this.activeJobs.delete(jobId);
-    }
+  console.log('🔵 6. Worker added to activeJobs');
+
+  worker.on('message', (message: WorkerResponse) => {
+    console.log('📨 Message from worker:', message);
   });
 
-  worker.on('error', async (error: Error) => {
-    console.error(`Job ${jobId} error:`, error);
-    this.activeJobs.delete(jobId);
+  worker.on('error', (error: Error) => {
+    console.error('❌ Worker error:', error);
   });
 
-  worker.on('exit', async (code: number) => {
-    console.log(`Job ${jobId} exited with code ${code}`);
+  worker.on('exit', (code: number) => {
+    console.log('🏁 Worker exited with code:', code);
   });
 
+  console.log('🔵 7. Job created:', jobId);
   return jobId;
 }
+{ 
